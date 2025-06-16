@@ -1,9 +1,16 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import '../services/colors.dart';
 import 'package:flowstate/pages/acc_page.dart';
 import 'package:flowstate/pages/login_page.dart';
+import 'package:flowstate/pages/calendar.dart';
+import 'package:flowstate/pages/statistic.dart';
+import 'package:flowstate/pages/exercises_page.dart';
+import 'package:flowstate/pages/ready_workouts_page.dart';
+import 'package:flowstate/pages/create_workout_page.dart';
+import '../services/snackbar.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -89,8 +96,8 @@ class TrainingScreenState extends State<TrainingScreen> {
                   label: '',
                 ),
                 BottomNavigationBarItem(
-                  icon: _buildNavIcon(Icons.bar_chart, 2),
-                  activeIcon: _buildActiveNavIcon(Icons.bar_chart),
+                  icon: _buildNavIcon(Icons.group, 2),
+                  activeIcon: _buildActiveNavIcon(Icons.group),
                   label: '',
                 ),
                 BottomNavigationBarItem(
@@ -169,15 +176,7 @@ class TrainingContent extends StatelessWidget {
                   ),
                 ),
               ] else ...[
-                Text(
-                  'Добро пожаловать, ${user.email}',
-                  style: const TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black87,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
+
                 const SizedBox(height: 10),
                 _buildButton(
                   'УПРАЖНЕНИЯ',
@@ -222,202 +221,6 @@ class TrainingContent extends StatelessWidget {
             color: textColor,
           ),
         ),
-      ),
-    );
-  }
-}
-
-class ExercisesScreen extends StatelessWidget {
-  const ExercisesScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // SVG-фон
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
-          ),
-          // Кнопка возврата назад
-          Positioned(
-            top: 40,
-            left: 16,
-            child: IconButton(
-              icon: const Icon(
-                Icons.arrow_back,
-                color: Colors.black,
-                size: 30,
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-              },
-            ),
-          ),
-          // Основное содержимое
-          const Center(
-            child: Text(
-              "Экран упражнений (в разработке)",
-              style: TextStyle(
-                fontSize: 20,
-                color: Colors.black,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// class ReadyWorkoutsScreen extends StatelessWidget {
-//   const ReadyWorkoutsScreen({super.key});
-
-//   @override
-//   Widget build(BuildContext context) {
-//     return Scaffold(
-//       body: Stack(
-//         children: [
-//           // SVG-фон
-//           Positioned.fill(
-//             child: SvgPicture.asset(
-//               'assets/background.svg',
-//               fit: BoxFit.cover,
-//             ),
-//           ),
-//           // Кнопка возврата назад
-//           Positioned(
-//             top: 40,
-//             left: 16,
-//             child: IconButton(
-//               icon: const Icon(
-//                 Icons.arrow_back,
-//                 color: Colors.black,
-//                 size: 30,
-//               ),
-//               onPressed: () {
-//                 Navigator.pop(context);
-//               },
-//             ),
-//           ),
-//           // Основное содержимое
-//           const Center(
-//             child: Text(
-//               "Экран готовых тренировок (в разработке)",
-//               style: TextStyle(
-//                 fontSize: 20,
-//                 color: Colors.black,
-//               ),
-//             ),
-//           ),
-//         ],
-//       ),
-//     );
-//   }
-// }
-
-class CreateWorkoutScreen extends StatelessWidget {
-  const CreateWorkoutScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          // SVG-фон
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
-          ),
-          // Кнопка возврата назад
-          Positioned(
-            top: 40,
-            left: 16,
-            child: IconButton(
-              icon: const Icon(
-                Icons.arrow_back,
-                color: Colors.black,
-                size: 30,
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-              },
-            ),
-          ),
-          // Основное содержимое
-          const Center(
-            child: Text(
-              "Экран создания тренировки (в разработке)",
-              style: TextStyle(
-                fontSize: 20,
-                color: Colors.black,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class CalendarScreen extends StatelessWidget {
-  const CalendarScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
-          ),
-          const Center(
-            child: Text(
-              "Экран календаря (в разработке)",
-              style: TextStyle(
-                fontSize: 20,
-                color: Colors.black,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class StatsScreen extends StatelessWidget {
-  const StatsScreen({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Stack(
-        children: [
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
-          ),
-          const Center(
-            child: Text(
-              "Экран статистики (в разработке)",
-              style: TextStyle(
-                fontSize: 20,
-                color: Colors.black,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

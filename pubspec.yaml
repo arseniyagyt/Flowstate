@@ -30,14 +30,19 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  firebase_auth: ^4.11.0
-  firebase_core: ^2.18.0
-  email_validator: ^2.1.17
+  firebase_auth: ^5.5.3
+  firebase_core: 3.13.0
+  email_validator: ^3.0.0
   cupertino_icons: ^1.0.8
-  cloud_firestore: ^4.8.0
+  cloud_firestore: ^5.6.7
+  shared_preferences: ^2.2.2
+  image_picker: ^0.8.7
+  firebase_storage: 12.4.5
   flutter_svg: 2.1.0
   google_fonts: ^6.1.0
-
+  flutter_tts: ^4.0.2
+  audioplayers: ^5.2.0
+  
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -59,8 +64,13 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
   assets:
-     - assets/
+    - assets/
+    - assets/music/ambient1.mp3
+    - assets/music/ambient2.mp3
+    - assets/music/nature.mp3
+    - assets/music/meditation.mp3
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg
@@ -71,15 +81,16 @@ flutter:
 
   # For details regarding adding assets from package dependencies, see
   # https://flutter.dev/to/asset-from-package
-  fonts:
-    - family: LilitaOne
-      fonts:
-         - asset: fonts/Lilita_One_Regular.ttf
+
   # To add custom fonts to your application, add a fonts section here,
   # in this "flutter" section. Each entry in this list should have a
   # "family" key with the font family name, and a "fonts" key with a
   # list giving the asset and other descriptors for the font. For
   # example:
+  fonts:
+    - family: LilitaOne
+      fonts:
+        - asset: fonts/Lilita_One_Regular.ttf
   # fonts:
   #   - family: Schyler
   #     fonts:

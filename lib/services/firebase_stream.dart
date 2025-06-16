@@ -1,6 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flowstate/pages/home_page.dart';
+import 'package:flowstate/pages/login_page.dart';
 
 class FirebaseStream extends StatelessWidget {
   const FirebaseStream({super.key});
@@ -19,7 +20,11 @@ class FirebaseStream extends StatelessWidget {
         final user = snapshot.data;
 
         if (user == null) {
-          return const HomeScreen();
+          return const LoginScreen();
+        }
+
+        if (!user.emailVerified) {
+          return const TrainingScreen(initialTabIndex: 0);
         }
 
         return const HomeScreen();

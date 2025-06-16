@@ -1,8 +1,13 @@
+import 'dart:async';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flowstate/services/colors.dart';
 import 'package:flowstate/services/snackbar.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'login_page.dart';
 
 class AccountScreen extends StatefulWidget {
@@ -13,77 +18,224 @@ class AccountScreen extends StatefulWidget {
 }
 
 class _AccountScreenState extends State<AccountScreen> {
-  final User? user = FirebaseAuth.instance.currentUser;
-  bool canResendEmail = true;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final TextEditingController _nicknameController = TextEditingController();
+  final FlutterTts _flutterTts = FlutterTts();
+  final AudioPlayer _audioPlayer = AudioPlayer();
+  User? get user => _auth.currentUser;
   bool isLoading = false;
-
-  // Контроллеры для полей ввода
-  final TextEditingController _firstNameController = TextEditingController(text: "Ксения");
-  final TextEditingController _lastNameController = TextEditingController(text: "Сивкова");
-  final TextEditingController _nicknameController = TextEditingController(text: "@ksksksesha");
-  final TextEditingController _emailController = TextEditingController();
-
-  // Переменные для настроек
+  int? _selectedAvatarId;
+  bool _isAvatarSelectionOpen = false;
   bool _isNotificationsEnabled = true;
-  double _soundVolume = 50.0;
+  double _voiceVolume = 50.0;
   double _musicVolume = 50.0;
+  String? _selectedVoice;
+  String? _selectedMusicTrack;
+  List<dynamic> _availableVoices = [];
+  Timer? _onlineStatusTimer;
+
+  final List<Map<String, dynamic>> _availableAvatars = [
+    {'id': 1, 'image': 'assets/male.png', 'name': 'Мужчина'},
+    {'id': 2, 'image': 'assets/female.png', 'name': 'Женщина'},
+  ];
+
+  final List<Map<String, String>> _availableMusicTracks = [
+    {'id': 'ambient1', 'name': 'Спокойный эмбиент', 'path': 'assets/music/ambient1.mp3'},
+    {'id': 'ambient2', 'name': 'Мягкий эмбиент', 'path': 'assets/music/ambient2.mp3'},
+    {'id': 'nature', 'name': 'Звуки природы', 'path': 'assets/music/nature.mp3'},
+    {'id': 'meditation', 'name': 'Медитация', 'path': 'assets/music/meditation.mp3'},
+  ];
 
   @override
   void initState() {
     super.initState();
-    _emailController.text = user?.email ?? "Не указан";
+    _loadProfile();
+    _loadSettings();
+    _initializeTts();
+    _nicknameController.text = user?.email?.split('@')[0] ?? '';
+    _startOnlineStatusUpdates();
+  }
+
+  // Инициализация TTS и загрузка доступных голосов
+  Future<void> _initializeTts() async {
+    await _flutterTts.setLanguage("ru-RU");
+    await _flutterTts.setSpeechRate(0.5);
+    await _flutterTts.setVolume(_voiceVolume / 100);
+    try {
+      var voices = await _flutterTts.getVoices;
+      setState(() {
+        _availableVoices = voices.where((voice) => voice['locale'] == 'ru-RU').toList();
+        if (_selectedVoice == null && _availableVoices.isNotEmpty) {
+          _selectedVoice = _availableVoices[0]['name'];
+          _flutterTts.setVoice({"name": "$_selectedVoice", "locale": "ru-RU"});
+        }
+      });
+    } catch (e) {
+      debugPrint('Ошибка загрузки голосов: $e');
+    }
+  }
+
+  // Тестовый запуск озвучки
+  Future<void> _testVoice() async {
+    await _flutterTts.stop();
+    await _flutterTts.speak("Проверка");
+  }
+
+  // Тестовый запуск музыки
+  Future<void> _testMusic() async {
+    try {
+      if (_selectedMusicTrack != null) {
+        await _audioPlayer.stop();
+        final track = _availableMusicTracks.firstWhere((t) => t['id'] == _selectedMusicTrack);
+        await _audioPlayer.setVolume(_musicVolume / 100);
+        await _audioPlayer.play(AssetSource(track['path']!.replaceFirst('assets/', '')));
+        // Останавливаем через 5 секунд для теста
+        Timer(const Duration(seconds: 5), () async {
+          await _audioPlayer.stop();
+        });
+      }
+    } catch (e) {
+      debugPrint('Ошибка воспроизведения музыки: $e');
+      SnackBarService.showSnackBar(context, 'Ошибка воспроизведения музыки', true);
+    }
+  }
+
+  void _startOnlineStatusUpdates() {
+    _updateOnlineStatus(true);
+    _onlineStatusTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      _updateOnlineStatus(true);
+    });
+  }
+
+  Future<void> _updateOnlineStatus(bool isOnline) async {
+    if (user == null) return;
+
+    try {
+      await _firestore.collection('users').doc(user!.uid).update({
+        'isOnline': isOnline,
+        'lastSeen': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('Ошибка обновления статуса: $e');
+    }
   }
 
   @override
   void dispose() {
-    _firstNameController.dispose();
-    _lastNameController.dispose();
+    _onlineStatusTimer?.cancel();
+    if (_auth.currentUser != null) {
+      _updateOnlineStatus(false);
+    }
     _nicknameController.dispose();
-    _emailController.dispose();
+    _flutterTts.stop();
+    _audioPlayer.dispose();
     super.dispose();
   }
 
-  Future<void> sendVerificationEmail() async {
+  Future<void> _loadProfile() async {
+    if (user == null) return;
+
+    setState(() => isLoading = true);
     try {
-      setState(() => canResendEmail = false);
-
-      await user?.sendEmailVerification();
-
-      if (!mounted) return;
-      SnackBarService.showSnackBar(
-        context,
-        'Письмо с подтверждением отправлено на ${user?.email}',
-        false,
-      );
-
-      await Future.delayed(const Duration(seconds: 30));
-      setState(() => canResendEmail = true);
+      final doc = await _firestore.collection('users').doc(user!.uid).get();
+      if (doc.exists) {
+        setState(() {
+          _nicknameController.text = doc.data()?['nickname'] ?? user!.email!.split('@')[0];
+          _selectedAvatarId = doc.data()?['avatarId'];
+        });
+      }
     } catch (e) {
-      if (!mounted) return;
-      SnackBarService.showSnackBar(
-        context,
-        'Ошибка отправки письма: $e',
-        true,
-      );
+      SnackBarService.showSnackBar(context, 'Ошибка загрузки профиля: $e', true);
+    } finally {
+      setState(() => isLoading = false);
     }
   }
 
-  Future<void> signOut() async {
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _voiceVolume = prefs.getDouble('voiceVolume') ?? 50.0;
+      _musicVolume = prefs.getDouble('musicVolume') ?? 50.0;
+      _isNotificationsEnabled = prefs.getBool('notificationsEnabled') ?? true;
+      _selectedVoice = prefs.getString('selectedVoice');
+      _selectedMusicTrack = prefs.getString('selectedMusicTrack') ?? _availableMusicTracks[0]['id'];
+    });
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble('voiceVolume', _voiceVolume);
+    await prefs.setDouble('musicVolume', _musicVolume);
+    await prefs.setBool('notificationsEnabled', _isNotificationsEnabled);
+    await prefs.setString('selectedVoice', _selectedVoice ?? '');
+    await prefs.setString('selectedMusicTrack', _selectedMusicTrack ?? '');
+    await _flutterTts.setVolume(_voiceVolume / 100);
+  }
+
+  Future<bool> _isNicknameUnique(String nickname) async {
+    if (nickname.isEmpty) return false;
+
     try {
-      await FirebaseAuth.instance.signOut();
+      final query = await _firestore
+          .collection('users')
+          .where('nickname', isEqualTo: nickname)
+          .limit(1)
+          .get();
+
+      if (query.docs.isEmpty) return true;
+
+      if (query.docs.first.id == user?.uid) return true;
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  Future<void> _saveProfile() async {
+    if (_nicknameController.text.isEmpty || user == null) {
+      SnackBarService.showSnackBar(context, 'Введите никнейм', true);
+      return;
+    }
+
+    final isUnique = await _isNicknameUnique(_nicknameController.text);
+    if (!isUnique) {
+      SnackBarService.showSnackBar(context, 'Этот никнейм уже занят', true);
+      return;
+    }
+
+    setState(() => isLoading = true);
+    try {
+      await _firestore.collection('users').doc(user!.uid).set({
+        'nickname': _nicknameController.text,
+        'avatarId': _selectedAvatarId,
+        'email': user!.email,
+        'isOnline': true,
+        'lastUpdated': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
 
       if (!mounted) return;
-      Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      SnackBarService.showSnackBar(context, 'Профиль сохранён', false);
+    } catch (e) {
+      if (!mounted) return;
+      SnackBarService.showSnackBar(context, 'Ошибка сохранения: $e', true);
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  Future<void> _signOut() async {
+    try {
+      await _auth.signOut();
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
         (route) => false,
       );
     } catch (e) {
-      if (!mounted) return;
-      SnackBarService.showSnackBar(
-        context,
-        'Ошибка выхода: $e',
-        true,
-      );
+      SnackBarService.showSnackBar(context, 'Ошибка выхода: $e', true);
     }
   }
 
@@ -95,7 +247,6 @@ class _AccountScreenState extends State<AccountScreen> {
     return Scaffold(
       body: Stack(
         children: [
-          // SVG-фон
           Positioned.fill(
             child: SvgPicture.asset(
               'assets/background.svg',
@@ -138,18 +289,30 @@ class _AccountScreenState extends State<AccountScreen> {
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Container(
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: avatarBorderColor,
-                                  width: 2,
+                            GestureDetector(
+                              onTap: () => setState(() => _isAvatarSelectionOpen = true),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: avatarBorderColor,
+                                    width: 2,
+                                  ),
                                 ),
-                              ),
-                              child: const CircleAvatar(
-                                radius: 40,
-                                backgroundImage: NetworkImage(
-                                  'https://sun9-30.userapi.com/impg/MfmN7sNobhqkRFe5nQzQdm_UO2-EEoOurKRfBw/0Z6qwfZjPaE.jpg?size=1620x2160&quality=95&sign=e2bbb567dd1109494bc41319f5a4e3f0&type=album',
+                                child: CircleAvatar(
+                                  radius: 40,
+                                  backgroundColor: Colors.grey[200],
+                                  backgroundImage: _selectedAvatarId != null
+                                      ? AssetImage(
+                                          _availableAvatars.firstWhere(
+                                            (a) => a['id'] == _selectedAvatarId,
+                                            orElse: () => _availableAvatars[0],
+                                          )['image'],
+                                        )
+                                      : null,
+                                  child: _selectedAvatarId == null
+                                      ? const Icon(Icons.person, size: 40, color: Colors.white)
+                                      : null,
                                 ),
                               ),
                             ),
@@ -182,78 +345,12 @@ class _AccountScreenState extends State<AccountScreen> {
                                       style: const TextStyle(
                                         fontSize: 14,
                                         fontWeight: FontWeight.w500,
-                                        color: Colors.grey,
+                                        color: Colors.black,
                                       ),
                                     ),
                                     SizedBox(height: screenHeight * 0.005),
-                                    Row(
-                                      children: [
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _firstNameController,
-                                            decoration: InputDecoration(
-                                              labelText: "Имя",
-                                              labelStyle: const TextStyle(color: Colors.grey, fontSize: 12),
-                                              border: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                                borderSide: const BorderSide(color: Colors.grey),
-                                              ),
-                                              focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                                borderSide: const BorderSide(color: secondaryColor),
-                                              ),
-                                              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ),
-                                        SizedBox(width: screenWidth * 0.03),
-                                        Expanded(
-                                          child: TextField(
-                                            controller: _lastNameController,
-                                            decoration: InputDecoration(
-                                              labelText: "Фамилия",
-                                              labelStyle: const TextStyle(color: Colors.grey, fontSize: 12),
-                                              border: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                                borderSide: const BorderSide(color: Colors.grey),
-                                              ),
-                                              focusedBorder: OutlineInputBorder(
-                                                borderRadius: BorderRadius.circular(8),
-                                                borderSide: const BorderSide(color: secondaryColor),
-                                              ),
-                                              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                                            ),
-                                            style: const TextStyle(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    SizedBox(height: screenHeight * 0.005),
-                                    TextField(
-                                      controller: _emailController,
-                                      readOnly: true, // Email нельзя редактировать
-                                      decoration: InputDecoration(
-                                        labelText: "Email",
-                                        labelStyle: const TextStyle(color: Colors.grey, fontSize: 12),
-                                        border: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                          borderSide: const BorderSide(color: Colors.grey),
-                                        ),
-                                        focusedBorder: OutlineInputBorder(
-                                          borderRadius: BorderRadius.circular(8),
-                                          borderSide: const BorderSide(color: secondaryColor),
-                                        ),
-                                        contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
-                                      ),
+                                    Text(
+                                      'Email: ${user?.email ?? "Не указан"}',
                                       style: const TextStyle(
                                         fontSize: 14,
                                         color: Colors.grey,
@@ -265,34 +362,6 @@ class _AccountScreenState extends State<AccountScreen> {
                             ),
                           ],
                         ),
-                        if (user != null && !user!.emailVerified) ...[
-                          SizedBox(height: screenHeight * 0.01),
-                          const Text(
-                            'Email не подтверждён',
-                            style: TextStyle(color: Colors.red),
-                          ),
-                          SizedBox(height: screenHeight * 0.005),
-                          SizedBox(
-                            width: 150,
-                            child: ElevatedButton(
-                              onPressed: canResendEmail ? sendVerificationEmail : null,
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: primaryColor,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                              ),
-                              child: const Text(
-                                'Подтвердить Email',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  color: textColor,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
                         SizedBox(height: screenHeight * 0.015),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.start,
@@ -300,13 +369,7 @@ class _AccountScreenState extends State<AccountScreen> {
                             SizedBox(
                               width: 120,
                               child: ElevatedButton(
-                                onPressed: () {
-                                  SnackBarService.showSnackBar(
-                                    context,
-                                    "Сохранено:\nНик: ${_nicknameController.text}\nИмя: ${_firstNameController.text}\nФамилия: ${_lastNameController.text}",
-                                    false,
-                                  );
-                                },
+                                onPressed: _saveProfile,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: primaryColor,
                                   shape: RoundedRectangleBorder(
@@ -327,7 +390,7 @@ class _AccountScreenState extends State<AccountScreen> {
                             SizedBox(
                               width: 120,
                               child: OutlinedButton(
-                                onPressed: signOut,
+                                onPressed: _signOut,
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(color: Colors.red),
                                   shape: RoundedRectangleBorder(
@@ -368,14 +431,14 @@ class _AccountScreenState extends State<AccountScreen> {
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   const Text(
-                                    "Звук",
+                                    "Голос",
                                     style: TextStyle(
                                       fontSize: 14,
                                       color: Colors.black,
                                     ),
                                   ),
                                   Text(
-                                    "${_soundVolume.round()}%",
+                                    "${_voiceVolume.round()}%",
                                     style: const TextStyle(
                                       fontSize: 14,
                                       color: Colors.black,
@@ -384,29 +447,60 @@ class _AccountScreenState extends State<AccountScreen> {
                                 ],
                               ),
                               Slider(
-                                value: _soundVolume,
+                                value: _voiceVolume,
                                 min: 0,
                                 max: 100,
                                 divisions: 100,
                                 activeColor: secondaryColor,
                                 inactiveColor: Colors.grey,
                                 onChanged: (value) {
-                                  setState(() => _soundVolume = value);
+                                  setState(() => _voiceVolume = value);
                                 },
-                                onChangeEnd: (value) {
-                                  SnackBarService.showSnackBar(
-                                    context,
-                                    "Громкость звука установлена на ${value.round()}%",
-                                    false,
-                                  );
+                                onChangeEnd: (value) async {
+                                  await _saveSettings();
+                                  await _testVoice();
                                 },
                               ),
-                              SizedBox(height: screenHeight * 0.005),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                                 children: [
                                   const Text(
-                                    "Музыка",
+                                    "Выбор голоса",
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  DropdownButton<String>(
+                                    value: _selectedVoice,
+                                    hint: const Text("Выберите голос"),
+                                    items: _availableVoices.map((voice) {
+                                      return DropdownMenuItem<String>(
+                                        value: voice['name'],
+                                        child: Text(
+                                          voice['name'],
+                                          style: const TextStyle(fontSize: 14),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      );
+                                    }).toList(),
+                                    onChanged: (value) async {
+                                      if (value != null) {
+                                        setState(() => _selectedVoice = value);
+                                        await _flutterTts.setVoice({"name": value, "locale": "ru-RU"});
+                                        await _saveSettings();
+                                        await _testVoice();
+                                      }
+                                    },
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: screenHeight * 0.01),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    "Громкость музыки",
                                     style: TextStyle(
                                       fontSize: 14,
                                       color: Colors.black,
@@ -431,13 +525,43 @@ class _AccountScreenState extends State<AccountScreen> {
                                 onChanged: (value) {
                                   setState(() => _musicVolume = value);
                                 },
-                                onChangeEnd: (value) {
-                                  SnackBarService.showSnackBar(
-                                    context,
-                                    "Громкость музыки установлена на ${value.round()}%",
-                                    false,
-                                  );
+                                onChangeEnd: (value) async {
+                                  await _saveSettings();
+                                  await _testMusic();
                                 },
+                              ),
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  const Text(
+                                    "Выбор музыки",
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.black,
+                                    ),
+                                  ),
+                                  DropdownButton<String>(
+                                    value: _selectedMusicTrack,
+                                    hint: const Text("Выберите трек"),
+                                    items: _availableMusicTracks.map((track) {
+                                      return DropdownMenuItem<String>(
+                                        value: track['id'],
+                                        child: Text(
+                                          track['name']!,
+                                          style: const TextStyle(fontSize: 14),
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      );
+                                    }).toList(),
+                                    onChanged: (value) async {
+                                      if (value != null) {
+                                        setState(() => _selectedMusicTrack = value);
+                                        await _saveSettings();
+                                        await _testMusic();
+                                      }
+                                    },
+                                  ),
+                                ],
                               ),
                             ],
                           ),
@@ -463,11 +587,7 @@ class _AccountScreenState extends State<AccountScreen> {
                                 value: _isNotificationsEnabled,
                                 onChanged: (value) {
                                   setState(() => _isNotificationsEnabled = value);
-                                  SnackBarService.showSnackBar(
-                                    context,
-                                    "Уведомления ${value ? 'включены' : 'выключены'}",
-                                    false,
-                                  );
+                                  _saveSettings();
                                 },
                                 activeColor: secondaryColor,
                               ),
@@ -481,6 +601,60 @@ class _AccountScreenState extends State<AccountScreen> {
               ),
             ),
           ),
+          if (_isAvatarSelectionOpen)
+            Center(
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  width: 250,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Выберите аватар', style: TextStyle(fontSize: 18)),
+                      const SizedBox(height: 16),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 16,
+                        children: _availableAvatars.map((avatar) => GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              _selectedAvatarId = avatar['id'];
+                              _isAvatarSelectionOpen = false;
+                            });
+                          },
+                          child: Column(
+                            children: [
+                              CircleAvatar(
+                                radius: 30,
+                                backgroundImage: AssetImage(avatar['image']),
+                                child: avatar['id'] == _selectedAvatarId
+                                    ? const Icon(Icons.check, color: Colors.white, size: 20)
+                                    : null,
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                avatar['name'],
+                                style: const TextStyle(fontSize: 12),
+                              ),
+                            ],
+                          ),
+                        )).toList(),
+                      ),
+                      TextButton(
+                        onPressed: () => setState(() => _isAvatarSelectionOpen = false),
+                        child: const Text('Закрыть'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
