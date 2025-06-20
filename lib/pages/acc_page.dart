@@ -8,7 +8,8 @@ import 'package:flowstate/services/colors.dart';
 import 'package:flowstate/services/snackbar.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'login_page.dart';
+import 'package:flowstate/pages/login_page.dart';
+import 'package:firebase_database/firebase_database.dart'; // <-- ИЗМЕНЕНИЕ: Добавлен импорт
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -33,7 +34,6 @@ class _AccountScreenState extends State<AccountScreen> {
   String? _selectedVoice;
   String? _selectedMusicTrack;
   List<dynamic> _availableVoices = [];
-  Timer? _onlineStatusTimer;
 
   final List<Map<String, dynamic>> _availableAvatars = [
     {'id': 1, 'image': 'assets/male.png', 'name': 'Мужчина'},
@@ -43,8 +43,8 @@ class _AccountScreenState extends State<AccountScreen> {
   final List<Map<String, String>> _availableMusicTracks = [
     {'id': 'ambient1', 'name': 'Спокойный эмбиент', 'path': 'assets/music/ambient1.mp3'},
     {'id': 'ambient2', 'name': 'Мягкий эмбиент', 'path': 'assets/music/ambient2.mp3'},
-    {'id': 'nature', 'name': 'Звуки природы', 'path': 'assets/music/nature.mp3'},
-    {'id': 'meditation', 'name': 'Медитация', 'path': 'assets/music/meditation.mp3'},
+    {'id': 'nature', 'name': 'Звуки природы', 'path': 'assets/music/meditation.mp3'},
+    {'id': 'meditation', 'name': 'Медитация', 'path': 'assets/music/nature.mp3'},
   ];
 
   @override
@@ -54,10 +54,8 @@ class _AccountScreenState extends State<AccountScreen> {
     _loadSettings();
     _initializeTts();
     _nicknameController.text = user?.email?.split('@')[0] ?? '';
-    _startOnlineStatusUpdates();
   }
 
-  // Инициализация TTS и загрузка доступных голосов
   Future<void> _initializeTts() async {
     await _flutterTts.setLanguage("ru-RU");
     await _flutterTts.setSpeechRate(0.5);
@@ -76,13 +74,11 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  // Тестовый запуск озвучки
   Future<void> _testVoice() async {
     await _flutterTts.stop();
     await _flutterTts.speak("Проверка");
   }
 
-  // Тестовый запуск музыки
   Future<void> _testMusic() async {
     try {
       if (_selectedMusicTrack != null) {
@@ -90,7 +86,6 @@ class _AccountScreenState extends State<AccountScreen> {
         final track = _availableMusicTracks.firstWhere((t) => t['id'] == _selectedMusicTrack);
         await _audioPlayer.setVolume(_musicVolume / 100);
         await _audioPlayer.play(AssetSource(track['path']!.replaceFirst('assets/', '')));
-        // Останавливаем через 5 секунд для теста
         Timer(const Duration(seconds: 5), () async {
           await _audioPlayer.stop();
         });
@@ -101,32 +96,8 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  void _startOnlineStatusUpdates() {
-    _updateOnlineStatus(true);
-    _onlineStatusTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
-      _updateOnlineStatus(true);
-    });
-  }
-
-  Future<void> _updateOnlineStatus(bool isOnline) async {
-    if (user == null) return;
-
-    try {
-      await _firestore.collection('users').doc(user!.uid).update({
-        'isOnline': isOnline,
-        'lastSeen': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      debugPrint('Ошибка обновления статуса: $e');
-    }
-  }
-
   @override
   void dispose() {
-    _onlineStatusTimer?.cancel();
-    if (_auth.currentUser != null) {
-      _updateOnlineStatus(false);
-    }
     _nicknameController.dispose();
     _flutterTts.stop();
     _audioPlayer.dispose();
@@ -135,7 +106,6 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<void> _loadProfile() async {
     if (user == null) return;
-
     setState(() => isLoading = true);
     try {
       final doc = await _firestore.collection('users').doc(user!.uid).get();
@@ -148,7 +118,7 @@ class _AccountScreenState extends State<AccountScreen> {
     } catch (e) {
       SnackBarService.showSnackBar(context, 'Ошибка загрузки профиля: $e', true);
     } finally {
-      setState(() => isLoading = false);
+      if(mounted) setState(() => isLoading = false);
     }
   }
 
@@ -168,25 +138,25 @@ class _AccountScreenState extends State<AccountScreen> {
     await prefs.setDouble('voiceVolume', _voiceVolume);
     await prefs.setDouble('musicVolume', _musicVolume);
     await prefs.setBool('notificationsEnabled', _isNotificationsEnabled);
-    await prefs.setString('selectedVoice', _selectedVoice ?? '');
-    await prefs.setString('selectedMusicTrack', _selectedMusicTrack ?? '');
+    if (_selectedVoice != null) {
+      await prefs.setString('selectedVoice', _selectedVoice!);
+    }
+    if (_selectedMusicTrack != null) {
+      await prefs.setString('selectedMusicTrack', _selectedMusicTrack!);
+    }
     await _flutterTts.setVolume(_voiceVolume / 100);
   }
 
   Future<bool> _isNicknameUnique(String nickname) async {
     if (nickname.isEmpty) return false;
-
     try {
       final query = await _firestore
           .collection('users')
           .where('nickname', isEqualTo: nickname)
           .limit(1)
           .get();
-
       if (query.docs.isEmpty) return true;
-
       if (query.docs.first.id == user?.uid) return true;
-
       return false;
     } catch (e) {
       return false;
@@ -211,8 +181,6 @@ class _AccountScreenState extends State<AccountScreen> {
         'nickname': _nicknameController.text,
         'avatarId': _selectedAvatarId,
         'email': user!.email,
-        'isOnline': true,
-        'lastUpdated': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
       if (!mounted) return;
@@ -221,21 +189,48 @@ class _AccountScreenState extends State<AccountScreen> {
       if (!mounted) return;
       SnackBarService.showSnackBar(context, 'Ошибка сохранения: $e', true);
     } finally {
-      setState(() => isLoading = false);
+      if(mounted) setState(() => isLoading = false);
     }
   }
 
+  // <-- ИЗМЕНЕНИЕ: Полностью заменен метод _signOut
   Future<void> _signOut() async {
-    try {
-      await _auth.signOut();
+    final User? currentUser = _auth.currentUser;
+    if (currentUser == null) {
       if (!mounted) return;
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (route) => false,
+            (route) => false,
+      );
+      return;
+    }
+
+    setState(() => isLoading = true);
+    try {
+      // 1. Устанавливаем статус "не в сети" в Realtime Database
+      await FirebaseDatabase.instance.ref('presence/${currentUser.uid}').update({
+        'isOnline': false,
+        'lastSeen': ServerValue.timestamp,
+      });
+
+      // 2. Выходим из аккаунта Firebase Auth
+      await _auth.signOut();
+
+      // 3. Перенаправляем на экран входа
+      if (!mounted) return;
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+            (route) => false,
       );
     } catch (e) {
+      if (!mounted) return;
       SnackBarService.showSnackBar(context, 'Ошибка выхода: $e', true);
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
+      }
     }
   }
 
@@ -304,11 +299,11 @@ class _AccountScreenState extends State<AccountScreen> {
                                   backgroundColor: Colors.grey[200],
                                   backgroundImage: _selectedAvatarId != null
                                       ? AssetImage(
-                                          _availableAvatars.firstWhere(
-                                            (a) => a['id'] == _selectedAvatarId,
-                                            orElse: () => _availableAvatars[0],
-                                          )['image'],
-                                        )
+                                    _availableAvatars.firstWhere(
+                                          (a) => a['id'] == _selectedAvatarId,
+                                      orElse: () => _availableAvatars[0],
+                                    )['image'],
+                                  )
                                       : null,
                                   child: _selectedAvatarId == null
                                       ? const Icon(Icons.person, size: 40, color: Colors.white)
@@ -369,13 +364,13 @@ class _AccountScreenState extends State<AccountScreen> {
                             SizedBox(
                               width: 120,
                               child: ElevatedButton(
-                                onPressed: _saveProfile,
+                                onPressed: isLoading ? null : _saveProfile,
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: primaryColor,
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(10),
                                   ),
-                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
                                 ),
                                 child: const Text(
                                   "Сохранить",
@@ -390,13 +385,13 @@ class _AccountScreenState extends State<AccountScreen> {
                             SizedBox(
                               width: 120,
                               child: OutlinedButton(
-                                onPressed: _signOut,
+                                onPressed: isLoading ? null : _signOut,
                                 style: OutlinedButton.styleFrom(
                                   side: const BorderSide(color: Colors.red),
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(10),
                                   ),
-                                  padding: const EdgeInsets.symmetric(vertical: 8),
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
                                 ),
                                 child: const Text(
                                   "Выйти",
@@ -653,6 +648,13 @@ class _AccountScreenState extends State<AccountScreen> {
                     ],
                   ),
                 ),
+              ),
+            ),
+          if (isLoading)
+            Container(
+              color: Colors.black.withOpacity(0.3),
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.white),
               ),
             ),
         ],

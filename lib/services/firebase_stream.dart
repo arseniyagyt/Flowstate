@@ -1,7 +1,7 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:flowstate/pages/home_page.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flowstate/pages/login_page.dart';
+import 'package:flowstate/pages/home_page.dart';
 
 class FirebaseStream extends StatelessWidget {
   const FirebaseStream({super.key});
@@ -17,17 +17,21 @@ class FirebaseStream extends StatelessWidget {
           );
         }
 
-        final user = snapshot.data;
+        if (snapshot.hasError) {
+          return const Scaffold(
+            body: Center(child: Text('Произошла ошибка')),
+          );
+        }
 
-        if (user == null) {
+        // Если пользователь авторизован, показываем главный экран.
+        // Главный экран (HomeScreen) сам настроит прослушиватель уведомлений.
+        if (snapshot.hasData) {
+          return const HomeScreen();
+        }
+        // Если пользователь не авторизован, показываем экран входа.
+        else {
           return const LoginScreen();
         }
-
-        if (!user.emailVerified) {
-          return const TrainingScreen(initialTabIndex: 0);
-        }
-
-        return const HomeScreen();
       },
     );
   }

@@ -1,36 +1,37 @@
 import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:flowstate/services/snackbar.dart';
-import 'package:flowstate/services/colors.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flowstate/services/colors.dart';
+import 'package:flowstate/services/snackbar.dart';
 
-class WorkoutDetailScreen extends StatefulWidget {
+class CustomWorkoutDetailScreen extends StatefulWidget {
   final String workoutName;
-  final List<Map<String, String>> exercises;
+  final List<Map<String, dynamic>> exercises;
 
-  const WorkoutDetailScreen({
+  const CustomWorkoutDetailScreen({
     super.key,
     required this.workoutName,
     required this.exercises,
   });
 
   @override
-  State<WorkoutDetailScreen> createState() => _WorkoutDetailScreenState();
+  State<CustomWorkoutDetailScreen> createState() =>
+      _CustomWorkoutDetailScreenState();
 }
 
-class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
+class _CustomWorkoutDetailScreenState extends State<CustomWorkoutDetailScreen> {
   int _currentExerciseIndex = 0;
   bool _showPraise = false;
-  final PageController _pageController = PageController();
+  late PageController _pageController;
   int _currentPage = 0;
   Timer? _timer;
-  bool _isTimerRunning = false;
   int _secondsRemaining = 30;
+  bool _isTimerRunning = false;
   bool _isPaused = true;
   late FlutterTts _flutterTts;
   late AudioPlayer _audioPlayer;
@@ -39,7 +40,6 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
   double _musicVolume = 50.0;
   String? _selectedMusicTrack;
 
-  // Словарь с текстами озвучки для каждого упражнения, с SSML для пауз
   final Map<String, List<String>> exerciseInstructions = {
     'Анантасана': [
       '<speak>Позиция 1: Лягте на спину. Расслабьтесь, почувствуйте контакт тела с полом. На выдохе плавно перекатитесь на левый бок. Расположитесь так, чтобы вес тела равномерно распределился на левом боку. Теперь аккуратно приподнимите голову. Левую руку вытяните над головой, выстраивая одну линию с телом. Согните локоть и ладонью левой руки мягко поддержите голову — расположите её чуть выше уха. Дышите спокойно или сделайте 2–3 глубоких цикла дыхания.<break time="500ms"/></speak>',
@@ -122,10 +122,20 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _pageController = PageController();
     _flutterTts = FlutterTts();
     _audioPlayer = AudioPlayer();
     _loadSettings();
     _initTts();
+    _secondsRemaining = _getCurrentTimerDuration();
+  }
+
+  int _getCurrentTimerDuration() {
+    if (widget.exercises.isEmpty || _currentExerciseIndex >= widget.exercises.length) {
+      return 30;
+    }
+    final exerciseName = widget.exercises[_currentExerciseIndex]['name'];
+    return exerciseTimers[exerciseName]?[_currentPage] ?? 30;
   }
 
   Future<void> _updateWorkoutCompletion() async {
@@ -214,7 +224,8 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
       _voiceVolume = prefs.getDouble('voiceVolume') ?? 50.0;
       _selectedVoice = prefs.getString('selectedVoice');
       _musicVolume = prefs.getDouble('musicVolume') ?? 50.0;
-      _selectedMusicTrack = prefs.getString('selectedMusicTrack') ?? _availableMusicTracks[0]['id'];
+      _selectedMusicTrack =
+          prefs.getString('selectedMusicTrack') ?? _availableMusicTracks[0]['id'];
     });
   }
 
@@ -224,13 +235,15 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
     await _flutterTts.setVolume(_voiceVolume / 100);
     await _flutterTts.setPitch(1.0);
     if (_selectedVoice != null) {
-      await _flutterTts.setVoice({"name": "$_selectedVoice", "locale": "ru-RU"});
+      await _flutterTts.setVoice({"name": _selectedVoice!, "locale": "ru-RU"});
     }
   }
 
   Future<void> _speakPosition(int page) async {
-    final exerciseName = widget.exercises[_currentExerciseIndex]['name']!;
-    final instructions = exerciseInstructions[exerciseName] ?? ['<speak>Позиция ${page + 1}</speak>'];
+    if (widget.exercises.isEmpty || _currentExerciseIndex >= widget.exercises.length) return;
+    final exerciseName = widget.exercises[_currentExerciseIndex]['name'];
+    final instructions =
+        exerciseInstructions[exerciseName] ?? ['<speak>Позиция ${page + 1}</speak>'];
     String text = instructions[page];
 
     await _flutterTts.stop();
@@ -248,13 +261,14 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
   Future<void> _playMusic() async {
     if (_selectedMusicTrack != null) {
       try {
-        final track = _availableMusicTracks.firstWhere((t) => t['id'] == _selectedMusicTrack);
+        final track = _availableMusicTracks
+            .firstWhere((t) => t['id'] == _selectedMusicTrack);
         await _audioPlayer.setVolume(_musicVolume / 100);
-        await _audioPlayer.play(AssetSource(track['path']!.replaceFirst('assets/', '')), mode: PlayerMode.mediaPlayer);
+        await _audioPlayer.play(AssetSource(track['path']!.replaceFirst('assets/', '')),
+            mode: PlayerMode.mediaPlayer);
         await _audioPlayer.setReleaseMode(ReleaseMode.loop);
       } catch (e) {
         debugPrint('Ошибка воспроизведения музыки: $e');
-        if(mounted) SnackBarService.showSnackBar(context, 'Ошибка воспроизведения музыки', true);
       }
     }
   }
@@ -269,39 +283,12 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
 
   @override
   void dispose() {
-    _timer?.cancel();
     _pageController.dispose();
+    _timer?.cancel();
     _flutterTts.stop();
     _stopMusic();
     _audioPlayer.dispose();
     super.dispose();
-  }
-
-  void _startTimer() {
-    if (!_isTimerRunning && !_isPaused) {
-      setState(() {
-        _isTimerRunning = true;
-      });
-      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-        setState(() {
-          if (_secondsRemaining > 0) {
-            _secondsRemaining--;
-          } else {
-            timer.cancel();
-            _isTimerRunning = false;
-            if (_currentPage < 2) {
-              _pageController.jumpToPage(_currentPage + 1);
-            } else {
-              _nextExercise();
-            }
-          }
-        });
-      });
-    }
   }
 
   void _pauseTimer() {
@@ -329,11 +316,12 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
       'Подготовьтесь к следующему упражнению! 5 секунд...',
       false,
     );
-    final exerciseName = widget.exercises[_currentExerciseIndex]['name']!;
+
     setState(() {
-      _secondsRemaining = exerciseTimers[exerciseName]![_currentPage];
+      _secondsRemaining = _getCurrentTimerDuration();
       _isPaused = true;
     });
+
     Timer(const Duration(seconds: 5), () async {
       if (mounted) {
         if (_currentExerciseIndex == 0 && _currentPage == 0) {
@@ -358,7 +346,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
         _currentExerciseIndex++;
         _currentPage = 0;
         _pageController.jumpToPage(0);
-        _secondsRemaining = exerciseTimers[widget.exercises[_currentExerciseIndex]['name']]![0];
+        _secondsRemaining = _getCurrentTimerDuration();
         _showFiveSecondAlert();
       } else {
         _showPraise = true;
@@ -368,7 +356,54 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
     });
   }
 
-  Widget _buildExercisePage(String imagePath, String exerciseName) {
+  void _startTimer() {
+    if (!_isTimerRunning && !_isPaused) {
+      setState(() {
+        _isTimerRunning = true;
+      });
+
+      _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) {
+          timer.cancel();
+          return;
+        }
+        setState(() {
+          if (_secondsRemaining > 0) {
+            _secondsRemaining--;
+          } else {
+            timer.cancel();
+            _isTimerRunning = false;
+
+            if (_currentPage < 2) {
+              _pageController.jumpToPage(_currentPage + 1);
+            } else {
+              _nextExercise();
+            }
+          }
+        });
+      });
+    }
+  }
+
+  Widget _buildExercisePage(int positionIndex) {
+    if (widget.exercises.isEmpty || _currentExerciseIndex >= widget.exercises.length) {
+      return const Center(child: Text("Ошибка упражнения."));
+    }
+    final exercise = widget.exercises[_currentExerciseIndex];
+
+    String? imagePath = 'assets/default_image.svg'; // Placeholder
+    if (positionIndex == 0) {
+      imagePath = exercise['image1'];
+    } else if (positionIndex == 1) {
+      imagePath = exercise['image2'];
+    } else {
+      imagePath = exercise['image3'];
+    }
+
+    if (imagePath == null) {
+      return const Center(child: Text("Изображение не найдено."));
+    }
+
     return Padding(
       padding: const EdgeInsets.all(16.0),
       child: Column(
@@ -394,6 +429,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                   child: SvgPicture.asset(
                     imagePath,
                     fit: BoxFit.contain,
+                    placeholderBuilder: (context) => const Center(child: CircularProgressIndicator()),
                   ),
                 ),
               ),
@@ -410,21 +446,19 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
               children: [
                 if (_currentPage == 0 && !_isTimerRunning && _isPaused)
                   ElevatedButton(
-                    onPressed: () {
-                      if (_currentExerciseIndex == 0 && _currentPage == 0) {
-                        _stopMusic();
-                      }
-                      _showFiveSecondAlert();
-                    },
+                    onPressed: _showFiveSecondAlert,
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color.fromARGB(255, 155, 193, 102),
+                      backgroundColor:
+                      const Color.fromARGB(255, 155, 193, 102),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
                       ),
                       minimumSize: const Size(double.infinity, 50),
                     ),
                     child: Text(
-                      _currentExerciseIndex == 0 ? 'Начать тренировку' : 'Начать упражнение',
+                      _currentExerciseIndex == 0
+                          ? 'Начать тренировку'
+                          : 'Начать упражнение',
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -460,12 +494,8 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                             _timer?.cancel();
                             _isTimerRunning = false;
                             _isPaused = true;
-                            _secondsRemaining =
-                            exerciseTimers[widget.exercises[_currentExerciseIndex]['name']!]![_currentPage - 1];
                             _pageController.jumpToPage(_currentPage - 1);
-                            if (_currentExerciseIndex == 0 && _currentPage == 0) {
-                              _stopMusic();
-                            }
+                            _secondsRemaining = _getCurrentTimerDuration();
                           });
                         }
                             : null,
@@ -494,9 +524,8 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                             _timer?.cancel();
                             _isTimerRunning = false;
                             _isPaused = false;
-                            _secondsRemaining =
-                            exerciseTimers[widget.exercises[_currentExerciseIndex]['name']!]![_currentPage + 1];
                             _pageController.jumpToPage(_currentPage + 1);
+                            _secondsRemaining = _getCurrentTimerDuration();
                           });
                         }
                             : null,
@@ -516,23 +545,16 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.exercises.isEmpty || _currentExerciseIndex >= widget.exercises.length) {
-      return Scaffold(
-        body: Center(
-          child: Text("Ошибка: неверные данные упражнений."),
-        ),
-      );
+    if (widget.exercises.isEmpty) {
+      return const Scaffold(body: Center(child: Text("Нет упражнений для отображения.")));
     }
-    final currentExercise = widget.exercises[_currentExerciseIndex];
 
     return Scaffold(
       body: Stack(
         children: [
           Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
+            child: SvgPicture.asset('assets/background.svg',
+                fit: BoxFit.cover),
           ),
           SafeArea(
             child: Column(
@@ -541,7 +563,8 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                   children: [
                     Center(
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 50),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 16, horizontal: 50),
                         child: Text(
                           '${widget.workoutName} (${_currentExerciseIndex + 1}/${widget.exercises.length})',
                           textAlign: TextAlign.center,
@@ -582,7 +605,7 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                           _timer?.cancel();
                           _isTimerRunning = false;
                           _isPaused = page == 0;
-                          _secondsRemaining = exerciseTimers[widget.exercises[_currentExerciseIndex]['name']!]![page];
+                          _secondsRemaining = _getCurrentTimerDuration();
                           if (page > 0) {
                             _isPaused = false;
                             _speakPosition(page);
@@ -593,9 +616,9 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                         });
                       },
                       children: [
-                        _buildExercisePage(currentExercise['image1']!, currentExercise['name']!),
-                        _buildExercisePage(currentExercise['image2']!, currentExercise['name']!),
-                        _buildExercisePage(currentExercise['image3']!, currentExercise['name']!),
+                        _buildExercisePage(0),
+                        _buildExercisePage(1),
+                        _buildExercisePage(2),
                       ],
                     ),
                   )
@@ -606,7 +629,8 @@ class _WorkoutDetailScreenState extends State<WorkoutDetailScreen> {
                         margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
                         padding: const EdgeInsets.all(34),
                         decoration: BoxDecoration(
-                          color: const Color.fromARGB(255, 252, 251, 251).withOpacity(0.9),
+                          color: const Color.fromARGB(255, 252, 251, 251)
+                              .withOpacity(0.9),
                           borderRadius: BorderRadius.circular(20),
                           boxShadow: [
                             BoxShadow(

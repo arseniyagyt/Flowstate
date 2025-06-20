@@ -1,8 +1,10 @@
 import 'package:email_validator/email_validator.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flowstate/services/snackbar.dart';
+import 'package:url_launcher/url_launcher.dart'; // Импорт для url_launcher
 import '../services/colors.dart';
 import 'login_page.dart';
 import 'home_page.dart';
@@ -19,6 +21,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _passwordConfirmController = TextEditingController();
   bool isLoading = false;
+  bool _isPrivacyPolicyAccepted = false; // Состояние чекбокса
 
   @override
   void dispose() {
@@ -28,7 +31,31 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
+  // Функция для открытия URL
+  Future<void> _launchURL(String url) async {
+    try {
+      final Uri uri = Uri.parse(url);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+      } else {
+        throw 'Не удалось открыть $url';
+      }
+    } catch (e) {
+      SnackBarService.showSnackBar(context, 'Ошибка: $e', true);
+    }
+  }
+
   Future<void> signUp() async {
+    // Проверка чекбокса
+    if (!_isPrivacyPolicyAccepted) {
+      SnackBarService.showSnackBar(
+        context,
+        'Необходимо согласиться с обработкой персональных данных',
+        true,
+      );
+      return;
+    }
+
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty || _passwordConfirmController.text.isEmpty) {
       SnackBarService.showSnackBar(
         context,
@@ -98,17 +125,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.transparent, // Прозрачный фон для устранения белой коробки
+      backgroundColor: Colors.transparent,
       body: Stack(
         children: [
-          // SVG-фон
           Positioned.fill(
             child: SvgPicture.asset(
               'assets/background.svg',
               fit: BoxFit.cover,
             ),
           ),
-          // Основное содержимое
           SafeArea(
             child: Center(
               child: Padding(
@@ -186,6 +211,34 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           ),
                         ),
                         obscureText: true,
+                      ),
+                      const SizedBox(height: 16),
+                      // Чекбокс для согласия на обработку данных
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Checkbox(
+                            value: _isPrivacyPolicyAccepted,
+                            onChanged: (bool? value) {
+                              setState(() {
+                                _isPrivacyPolicyAccepted = value ?? false;
+                              });
+                            },
+                            activeColor: const Color.fromARGB(255, 89, 94, 82),
+                          ),
+                          Expanded(
+                            child: Text.rich(
+                              TextSpan(
+                                text: 'Я согласен с обработкой персональных данных',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: Color.fromARGB(255, 0, 0, 0),
+                                ),
+                                
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                       const SizedBox(height: 24),
                       SizedBox(

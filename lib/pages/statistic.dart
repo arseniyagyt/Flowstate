@@ -4,7 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flowstate/services/colors.dart';
 import 'package:flowstate/services/snackbar.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:firebase_database/firebase_database.dart'; // Импорт для Realtime Database
+import 'package:intl/intl.dart'; // Для форматирования даты/времени
+import 'package:flutter_svg/flutter_svg.dart'; // Импорт для SVG фона
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -16,6 +18,7 @@ class StatsScreen extends StatefulWidget {
 class _StatsScreenState extends State<StatsScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseDatabase _realtimeDatabase = FirebaseDatabase.instance; // Инициализация Realtime Database
   final TextEditingController _searchController = TextEditingController();
   List<Map<String, dynamic>> _friends = [];
   List<Map<String, dynamic>> _requests = [];
@@ -23,8 +26,15 @@ class _StatsScreenState extends State<StatsScreen> {
   bool _isLoading = false;
   int _selectedTab = 0;
   int _pendingRequestsCount = 0;
-  Map<String, bool> _onlineStatus = {};
+  Map<String, Map<String, dynamic>> _onlineStatus = {};
   List<String> _sentRequests = [];
+  Map<String, int> _friendsStreaks = {};
+  StreamSubscription? _presenceListener;
+
+  final List<Map<String, dynamic>> _availableAvatars = [
+    {'id': 1, 'image': 'assets/male.png', 'name': 'Мужчина'},
+    {'id': 2, 'image': 'assets/female.png', 'name': 'Женщина'},
+  ];
 
   @override
   void initState() {
@@ -32,8 +42,44 @@ class _StatsScreenState extends State<StatsScreen> {
     if (_auth.currentUser != null) {
       _loadData();
       _setupRequestListener();
-      _setupOnlineStatusListener();
+      _setupPresenceListener();
       _loadSentRequests();
+      _loadFriendsStreaks();
+    }
+  }
+
+  @override
+  void dispose() {
+    _presenceListener?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadFriendsStreaks() async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return;
+
+      final friendsSnapshot = await _firestore
+          .collection('friends')
+          .where('users', arrayContains: user.uid)
+          .get();
+
+      final streaks = <String, int>{};
+
+      for (var doc in friendsSnapshot.docs) {
+        final friendId = doc.data()['users'].firstWhere((id) => id != user.uid);
+        final friendDoc = await _firestore.collection('users').doc(friendId).get();
+        streaks[friendId] = friendDoc.data()?['streakDays'] as int? ?? 0;
+      }
+
+      if (mounted) {
+        setState(() {
+          _friendsStreaks = streaks;
+        });
+      }
+    } catch (e) {
+      debugPrint('Ошибка загрузки streak друзей: $e');
     }
   }
 
@@ -45,23 +91,38 @@ class _StatsScreenState extends State<StatsScreen> {
           .where('status', isEqualTo: 'pending')
           .get();
 
-      setState(() {
-        _sentRequests = snapshot.docs.map((doc) => doc.data()['receiverId'] as String).toList();
-      });
+      if (mounted) {
+        setState(() {
+          _sentRequests = snapshot.docs.map((doc) => doc.data()['receiverId'] as String).toList();
+        });
+      }
     } catch (e) {
       debugPrint('Ошибка загрузки отправленных заявок: $e');
     }
   }
 
-  Future<void> _setupOnlineStatusListener() async {
-    _firestore.collection('users').snapshots().listen((snapshot) {
-      final statusMap = <String, bool>{};
-      for (var doc in snapshot.docs) {
-        statusMap[doc.id] = doc.data()['isOnline'] ?? false;
+  void _setupPresenceListener() {
+    _presenceListener = _realtimeDatabase.ref('presence').onValue.listen((event) {
+      final updatedStatus = <String, Map<String, dynamic>>{};
+      if (event.snapshot.value != null) {
+        final data = event.snapshot.value as Map<dynamic, dynamic>;
+        data.forEach((userId, userData) {
+          if (userData is Map && userData.containsKey('isOnline') && userData.containsKey('lastSeen')) {
+            updatedStatus[userId as String] = {
+              'isOnline': userData['isOnline'] as bool? ?? false,
+              'lastSeen': userData['lastSeen'] as int? ?? 0,
+            };
+          }
+        });
       }
-      setState(() {
-        _onlineStatus = statusMap;
-      });
+      if (mounted) {
+        setState(() {
+          _onlineStatus = updatedStatus;
+          debugPrint("statistic.dart: _onlineStatus обновлен: $_onlineStatus");
+        });
+      }
+    }, onError: (error) {
+      debugPrint("statistic.dart: Ошибка при получении статуса присутствия: $error");
     });
   }
 
@@ -69,66 +130,134 @@ class _StatsScreenState extends State<StatsScreen> {
     final user = _auth.currentUser;
     if (user == null) return;
 
-    _firestore
-        .collection('friend_requests')
-        .where('receiverId', isEqualTo: user.uid)
-        .where('status', isEqualTo: 'pending')
-        .snapshots()
-        .listen((snapshot) {
-      setState(() {
-        _pendingRequestsCount = snapshot.docs.length;
+    try {
+      _firestore
+          .collection('friend_requests')
+          .where('receiverId', isEqualTo: user.uid)
+          .where('status', isEqualTo: 'pending')
+          .snapshots()
+          .listen((snapshot) {
+        if (mounted) {
+          setState(() {
+            _pendingRequestsCount = snapshot.docs.length;
+          });
+        }
+      }, onError: (error) {
+        debugPrint("statistic.dart: Ошибка слушателя заявок: $error");
       });
-    });
+    } catch (e) {
+      debugPrint("statistic.dart: Ошибка настройки слушателя заявок: $e");
+    }
   }
 
   Future<void> _loadData() async {
-    setState(() => _isLoading = true);
+    if (mounted) setState(() => _isLoading = true);
     try {
       final user = _auth.currentUser;
       if (user == null) return;
 
-      // Load friends
+      final List<Future<Map<String, dynamic>?>> friendFutures = [];
       final friendsSnapshot = await _firestore
           .collection('friends')
           .where('users', arrayContains: user.uid)
           .get();
 
-      _friends = await Future.wait(
-        friendsSnapshot.docs.map((doc) async {
-          final friendId = doc.data()['users'].firstWhere((id) => id != user.uid);
-          final userDoc = await _firestore.collection('users').doc(friendId).get();
-          return {
-            ...userDoc.data()!,
-            'id': friendId,
-            'docId': doc.id,
-            'type': 'friend',
-          };
-        }),
-      );
+      for (var doc in friendsSnapshot.docs) {
+        final friendId = doc.data()['users'].firstWhere((id) => id != user.uid);
+        friendFutures.add(
+          _firestore.collection('users').doc(friendId).get().then((userDoc) {
+            if (userDoc.exists) {
+              return {
+                ...userDoc.data()!,
+                'id': friendId,
+                'docId': doc.id,
+                'type': 'friend',
+              };
+            }
+            return null;
+          }),
+        );
+      }
 
-      // Load requests
+      final List<Map<String, dynamic>?> loadedFriendsWithNulls = await Future.wait(friendFutures);
+      final List<Map<String, dynamic>> loadedFriends = loadedFriendsWithNulls.whereType<Map<String, dynamic>>().toList();
+
+      if (mounted) {
+        setState(() {
+          _friends = loadedFriends;
+        });
+      }
+
+      final List<Future<Map<String, dynamic>?>> requestFutures = [];
       final requestsSnapshot = await _firestore
           .collection('friend_requests')
           .where('receiverId', isEqualTo: user.uid)
           .where('status', isEqualTo: 'pending')
           .get();
 
-      _requests = await Future.wait(
-        requestsSnapshot.docs.map((doc) async {
-          final senderDoc = await _firestore.collection('users').doc(doc.data()['senderId']).get();
-          return {
-            ...senderDoc.data()!,
-            'id': doc.data()['senderId'],
-            'requestId': doc.id,
-            'type': 'request',
-          };
-        }),
-      );
+      for (var doc in requestsSnapshot.docs) {
+        requestFutures.add(
+          _firestore.collection('users').doc(doc.data()['senderId']).get().then((senderDoc) {
+            if (senderDoc.exists) {
+              return {
+                ...senderDoc.data()!,
+                'id': doc.data()['senderId'],
+                'requestId': doc.id,
+                'type': 'request',
+              };
+            }
+            return null;
+          }),
+        );
+      }
+
+      final List<Map<String, dynamic>?> loadedRequestsWithNulls = await Future.wait(requestFutures);
+      final List<Map<String, dynamic>> loadedRequests = loadedRequestsWithNulls.whereType<Map<String, dynamic>>().toList();
+
+      if (mounted) {
+        setState(() {
+          _requests = loadedRequests;
+        });
+      }
+
+      await _loadFriendsStreaks();
     } catch (e) {
-      SnackBarService.showSnackBar(context, 'Ошибка загрузки данных: $e', true);
+      if (mounted) SnackBarService.showSnackBar(context, 'Ошибка загрузки данных: $e', true);
+      debugPrint('statistic.dart: Ошибка загрузки данных: $e');
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  String _getOnlineStatusText(String userId) {
+    final statusData = _onlineStatus[userId];
+    if (statusData == null) {
+      return 'Загрузка статуса...';
+    }
+
+    final isOnline = statusData['isOnline'] as bool? ?? false;
+    final lastSeenTimestamp = statusData['lastSeen'] as int? ?? 0;
+
+    if (isOnline) {
+      return 'В сети';
+    } else if (lastSeenTimestamp > 0) {
+      final lastSeenDate = DateTime.fromMillisecondsSinceEpoch(lastSeenTimestamp);
+      final now = DateTime.now();
+      final difference = now.difference(lastSeenDate);
+
+      if (difference.inMinutes < 1) {
+        return 'Не в сети (только что)';
+      } else if (difference.inHours < 1) {
+        return 'Не в сети (${difference.inMinutes} мин. назад)';
+      } else if (difference.inHours < 24) {
+        return 'Не в сети (${difference.inHours} ч. назад)';
+      } else if (difference.inDays < 7) {
+        return 'Не в сети (${difference.inDays} дн. назад)';
+      } else {
+        return 'Не в сети (${DateFormat('dd.MM.yyyy HH:mm').format(lastSeenDate)})';
+      }
+    }
+    return 'Не в сети (статус недоступен)';
   }
 
   @override
@@ -160,7 +289,7 @@ class _StatsScreenState extends State<StatsScreen> {
           ),
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.only(top: 16), // Отступ сверху
+              padding: const EdgeInsets.only(top: 16),
               child: Column(
                 children: [
                   Container(
@@ -202,7 +331,7 @@ class _StatsScreenState extends State<StatsScreen> {
                                 child: const Text('Друзья'),
                               ),
                             ),
-                            const SizedBox(width: 8), // Отступ между кнопками
+                            const SizedBox(width: 8),
                             Expanded(
                               child: Stack(
                                 alignment: Alignment.center,
@@ -253,7 +382,7 @@ class _StatsScreenState extends State<StatsScreen> {
                           ],
                         ),
                         if (_selectedTab == 0) ...[
-                          const SizedBox(height: 8), // Отступ перед полем поиска
+                          const SizedBox(height: 8),
                           TextField(
                             controller: _searchController,
                             decoration: const InputDecoration(
@@ -274,7 +403,7 @@ class _StatsScreenState extends State<StatsScreen> {
                   Expanded(
                     child: Container(
                       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24), // Нижний отступ для BottomNavigationBar
+                      padding: const EdgeInsets.fromLTRB(8, 8, 8, 24),
                       decoration: BoxDecoration(
                         color: Colors.white.withOpacity(0.9),
                         borderRadius: BorderRadius.circular(16),
@@ -328,13 +457,22 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 
   Widget _buildFriendItem(Map<String, dynamic> friend) {
-    final isOnline = _onlineStatus[friend['id']] ?? false;
+    final statusData = _onlineStatus[friend['id']];
+    final isOnline = statusData?['isOnline'] as bool? ?? false;
+    final avatarId = friend['avatarId'] as int?;
+    final avatar = avatarId != null
+        ? _availableAvatars.firstWhere(
+            (a) => a['id'] == avatarId,
+            orElse: () => _availableAvatars[0],
+          )
+        : null;
+    final streak = _friendsStreaks[friend['id']] ?? 0;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8), // Уменьшен вертикальный отступ
+      margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
       decoration: BoxDecoration(
-        color: secondaryColor.withOpacity(0.2), // Прозрачный зеленый фон
-        borderRadius: BorderRadius.circular(24), // Скругленные углы
+        color: secondaryColor.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8),
@@ -342,13 +480,9 @@ class _StatsScreenState extends State<StatsScreen> {
           children: [
             CircleAvatar(
               radius: 20,
-              backgroundImage: _getAvatarImage(friend['avatarId']),
-              backgroundColor: friend['avatarId'] == null || (friend['avatarId'] != 1 && friend['avatarId'] != 2)
-                  ? _getAvatarColor(friend['avatarId'])
-                  : Colors.transparent,
-              child: friend['avatarId'] == null || (friend['avatarId'] != 1 && friend['avatarId'] != 2)
-                  ? const Icon(Icons.person, color: Colors.white, size: 20)
-                  : null,
+              backgroundColor: Colors.grey[200],
+              backgroundImage: avatar != null ? AssetImage(avatar['image']) : null,
+              child: avatar == null ? const Icon(Icons.person, color: Colors.white, size: 20) : null,
             ),
             Positioned(
               right: 0,
@@ -370,101 +504,140 @@ class _StatsScreenState extends State<StatsScreen> {
           style: const TextStyle(fontSize: 14),
         ),
         subtitle: Text(
-          isOnline ? 'В сети' : 'Не в сети',
+          _getOnlineStatusText(friend['id']),
           style: const TextStyle(fontSize: 12),
         ),
-        trailing: IconButton(
-          icon: const Icon(Icons.delete, size: 20),
-          onPressed: () => _removeFriend(friend['docId']),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (streak > 0)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.red[50],
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      streak.toString(),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Icon(Icons.favorite, color: Colors.red, size: 16),
+                  ],
+                ),
+              ),
+            IconButton(
+              icon: const Icon(Icons.delete, size: 20),
+              onPressed: () => _removeFriend(friend['docId']),
+            ),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildRequestItem(Map<String, dynamic> request) {
-  final isOnline = _onlineStatus[request['id']] ?? false;
+    final statusData = _onlineStatus[request['id']];
+    final isOnline = statusData?['isOnline'] as bool? ?? false;
+    final avatarId = request['avatarId'] as int?;
+    final avatar = avatarId != null
+        ? _availableAvatars.firstWhere(
+            (a) => a['id'] == avatarId,
+            orElse: () => _availableAvatars[0],
+          )
+        : null;
 
-  return Container(
-    margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8), // Уменьшен вертикальный отступ
-    decoration: BoxDecoration(
-      color: secondaryColor.withOpacity(0.2), // Прозрачный зеленый фон
-      borderRadius: BorderRadius.circular(24), // Скругленные углы
-    ),
-    child: ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-      leading: Stack(
-        children: [
-          CircleAvatar(
-            radius: 20,
-            backgroundImage: _getAvatarImage(request['avatarId']),
-            backgroundColor: request['avatarId'] == null || (request['avatarId'] != 1 && request['avatarId'] != 2)
-                ? _getAvatarColor(request['avatarId'])
-                : Colors.transparent,
-            child: request['avatarId'] == null || (request['avatarId'] != 1 && request['avatarId'] != 2)
-                ? const Icon(Icons.person, color: Colors.white, size: 20)
-                : null,
-          ),
-          Positioned(
-            right: 0,
-            bottom: 0,
-            child: Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: isOnline ? Colors.green : Colors.grey,
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white, width: 1.5),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: secondaryColor.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+        leading: Stack(
+          children: [
+            CircleAvatar(
+              radius: 20,
+              backgroundColor: Colors.grey[200],
+              backgroundImage: avatar != null ? AssetImage(avatar['image']) : null,
+              child: avatar == null ? const Icon(Icons.person, color: Colors.white, size: 20) : null,
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  color: isOnline ? Colors.green : Colors.grey,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white, width: 1.5),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
+        title: Text(
+          request['nickname'] ?? 'Без ника',
+          style: const TextStyle(fontSize: 14),
+        ),
+        subtitle: Text(
+          _getOnlineStatusText(request['id']),
+          style: const TextStyle(fontSize: 12),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.check, color: Colors.green, size: 20),
+              onPressed: () => _respondToRequest(request['requestId'], true),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, color: Colors.red, size: 20),
+              onPressed: () => _respondToRequest(request['requestId'], false),
+            ),
+          ],
+        ),
       ),
-      title: Text(
-        request['nickname'] ?? 'Без ника',
-        style: const TextStyle(fontSize: 14),
-      ),
-      subtitle: Text(
-        isOnline ? 'В сети' : 'Не в сети',
-        style: const TextStyle(fontSize: 12),
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.check, color: Colors.green, size: 20),
-            onPressed: () => _respondToRequest(request['requestId'], true),
-          ),
-          IconButton(
-            icon: const Icon(Icons.close, color: Colors.red, size: 20),
-            onPressed: () => _respondToRequest(request['requestId'], false),
-          ),
-        ],
-      ),
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildSearchResultItem(Map<String, dynamic> user) {
-    final isOnline = _onlineStatus[user['id']] ?? false;
+    final statusData = _onlineStatus[user['id']];
+    final isOnline = statusData?['isOnline'] as bool? ?? false;
     final isFriend = _friends.any((friend) => friend['id'] == user['id']);
     final hasPendingRequest = _requests.any((req) => req['id'] == user['id']);
     final hasSentRequest = _sentRequests.contains(user['id']);
+    final avatarId = user['avatarId'] as int?;
+    final avatar = avatarId != null
+        ? _availableAvatars.firstWhere(
+            (a) => a['id'] == avatarId,
+            orElse: () => _availableAvatars[0],
+          )
+        : null;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      decoration: BoxDecoration(
+        color: secondaryColor.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(24),
+      ),
       child: ListTile(
         contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         leading: Stack(
           children: [
             CircleAvatar(
               radius: 20,
-              backgroundImage: _getAvatarImage(user['avatarId']),
-              backgroundColor: user['avatarId'] == null || (user['avatarId'] != 1 && user['avatarId'] != 2)
-                  ? _getAvatarColor(user['avatarId'])
-                  : Colors.transparent,
-              child: user['avatarId'] == null || (user['avatarId'] != 1 && user['avatarId'] != 2)
-                  ? const Icon(Icons.person, color: Colors.white, size: 20)
-                  : null,
+              backgroundColor: Colors.grey[200],
+              backgroundImage: avatar != null ? AssetImage(avatar['image']) : null,
+              child: avatar == null ? const Icon(Icons.person, color: Colors.white, size: 20) : null,
             ),
             Positioned(
               right: 0,
@@ -486,7 +659,7 @@ class _StatsScreenState extends State<StatsScreen> {
           style: const TextStyle(fontSize: 14),
         ),
         subtitle: Text(
-          isOnline ? 'В сети' : 'Не в сети',
+          _getOnlineStatusText(user['id']),
           style: const TextStyle(fontSize: 12),
         ),
         trailing: isFriend
@@ -503,17 +676,6 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  ImageProvider? _getAvatarImage(int? avatarId) {
-    switch (avatarId) {
-      case 1:
-        return const AssetImage('assets/male.png');
-      case 2:
-        return const AssetImage('assets/female.png');
-      default:
-        return null;
-    }
-  }
-
   Future<void> _sendFriendRequest(String userId) async {
     if (_sentRequests.contains(userId)) {
       SnackBarService.showSnackBar(context, 'Вы уже отправили заявку этому пользователю', true);
@@ -528,9 +690,11 @@ class _StatsScreenState extends State<StatsScreen> {
         'createdAt': FieldValue.serverTimestamp(),
       });
 
-      setState(() {
-        _sentRequests.add(userId);
-      });
+      if (mounted) {
+        setState(() {
+          _sentRequests.add(userId);
+        });
+      }
 
       SnackBarService.showSnackBar(context, 'Заявка отправлена', false);
     } catch (e) {
@@ -540,7 +704,7 @@ class _StatsScreenState extends State<StatsScreen> {
 
   Future<void> _searchUsers(String query) async {
     if (query.isEmpty) {
-      setState(() => _searchResults = []);
+      if (mounted) setState(() => _searchResults = []);
       return;
     }
 
@@ -548,39 +712,23 @@ class _StatsScreenState extends State<StatsScreen> {
       final snapshot = await _firestore
           .collection('users')
           .where('nickname', isGreaterThanOrEqualTo: query)
-          .where('nickname', isLessThanOrEqualTo: query + '\uf8ff')
+          .where('nickname', isLessThanOrEqualTo: '$query\uf8ff')
           .limit(10)
           .get();
 
-      setState(() {
-        _searchResults = snapshot.docs
-            .where((doc) => doc.id != _auth.currentUser?.uid)
-            .map((doc) => {
-                  ...doc.data(),
-                  'id': doc.id,
-                })
-            .toList();
-      });
+      if (mounted) {
+        setState(() {
+          _searchResults = snapshot.docs
+              .where((doc) => doc.id != _auth.currentUser?.uid)
+              .map((doc) => {
+                    ...doc.data(),
+                    'id': doc.id,
+                  })
+              .toList();
+        });
+      }
     } catch (e) {
       SnackBarService.showSnackBar(context, 'Ошибка поиска: $e', true);
-    }
-  }
-
-  Color _getAvatarColor(int? avatarId) {
-    const defaultColor = Colors.grey;
-    if (avatarId == null) return defaultColor;
-
-    switch (avatarId) {
-      case 3:
-        return Colors.green;
-      case 4:
-        return Colors.yellow;
-      case 5:
-        return Colors.purple;
-      case 6:
-        return Colors.orange;
-      default:
-        return defaultColor;
     }
   }
 

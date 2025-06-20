@@ -3,164 +3,150 @@ import 'package:flutter_svg/flutter_svg.dart';
 import '../services/colors.dart';
 import 'relaxation_workout_screen.dart';
 import 'stretching_workout_screen.dart';
+import 'custom_workouts_screen.dart';
 
 class ReadyWorkoutsScreen extends StatelessWidget {
   const ReadyWorkoutsScreen({super.key});
+
+  Widget _buildWorkoutBlock({
+    required String title,
+    required String imageAsset,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 20),
+        child: Column(
+          children: [
+            Container(
+              width: 300,
+              height: 200,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(15),
+                gradient: const LinearGradient(
+                  begin: Alignment.bottomCenter,
+                  end: Alignment.topCenter,
+                  colors: [gradientColor, primaryColor],
+                  stops: [0.0, 0.5],
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(15),
+                    color: Colors.white,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(15),
+                    child: SvgPicture.asset(
+                      imageAsset,
+                      fit: BoxFit.contain,
+                      width: 260,
+                      height: 160,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.black,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          // SVG-фон
           Positioned.fill(
             child: SvgPicture.asset(
               'assets/background.svg',
               fit: BoxFit.cover,
             ),
           ),
-          // Кнопка возврата назад
-          Positioned(
-            top: 30, // Отступ сверху, чтобы не прилипала к краю
-            left: 26, // Отступ слева
-            child: IconButton(
-              icon: const Icon(
-                Icons.arrow_back,
-                color: Colors.black, // Цвет иконки
-                size: 30, // Размер иконки
-              ),
-              onPressed: () {
-                Navigator.pop(context); // Возврат на предыдущий экран
-              },
-            ),
-          ),
-          // Основное содержимое
-          Center(
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // Блок "Расслабление"
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const RelaxationWorkoutScreen(),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        icon: const Icon(
+                          Icons.arrow_back,
+                          color: Colors.black,
+                          size: 30,
                         ),
-                      );
-                    },
-                    child: Column(
-                      children: [
-                        // Контейнер для границы с градиентом
-                        Container(
-                          width: 300,
-                          height: 200,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(15),
-                            gradient: const LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                gradientColor, // Синий цвет снизу
-                                primaryColor, // Прозрачный сверху
-                              ],
-                              stops: [0.0, 0.5],
-                            ),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20.0), // Ширина границы 20 пикселей
-                            child: Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(15),
-                                color: Colors.white, // Внутренний фон контейнера
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(15),
-                                child: SvgPicture.asset(
-                                  'assets/relaxation.svg',
-                                  fit: BoxFit.cover,
-                                  width: 260, // Учитываем ширину границы
-                                  height: 160, // Учитываем ширину границы
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          "Расслабление",
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          "Готовые тренировки",
+                          textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                             color: Colors.black,
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 40),
-                  // Блок "Растяжка"
-                  GestureDetector(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const StretchingWorkoutScreen(),
-                        ),
-                      );
-                    },
+                ),
+                Expanded(
+                  child: SingleChildScrollView(
                     child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        // Контейнер для границы с градиентом
-                        Container(
-                          width: 300,
-                          height: 200,
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(15),
-                            gradient: const LinearGradient(
-                              begin: Alignment.bottomCenter,
-                              end: Alignment.topCenter,
-                              colors: [
-                                gradientColor, // Синий цвет снизу
-                                primaryColor, // Прозрачный сверху
-                              ],
-                              stops: [0.0, 0.5],
-                            ),
-                          ),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20.0), // Ширина границы 20 пикселей
-                            child: Container(
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(15),
-                                color: Colors.white, // Внутренний фон контейнера
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(15),
-                                child: SvgPicture.asset(
-                                  'assets/stretching.svg',
-                                  fit: BoxFit.cover,
-                                  width: 260, // Учитываем ширину границы
-                                  height: 160, // Учитываем ширину границы
-                                ),
-                              ),
+                        _buildWorkoutBlock(
+                          title: "Расслабление",
+                          imageAsset: 'assets/relaxation.svg',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const RelaxationWorkoutScreen(),
                             ),
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          "Растяжка",
-                          style: TextStyle(
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
+                        _buildWorkoutBlock(
+                          title: "Растяжка",
+                          imageAsset: 'assets/stretching.svg',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const StretchingWorkoutScreen(),
+                            ),
                           ),
                         ),
+                        _buildWorkoutBlock(
+                          title: "Созданные тренировки",
+                          imageAsset: 'assets/idk_1.svg',
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const CustomWorkoutsScreen(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 40),
                       ],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ],

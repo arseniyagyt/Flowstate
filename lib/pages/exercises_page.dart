@@ -1,142 +1,391 @@
-import 'package:flowstate/services/colors.dart';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'dart:async';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/colors.dart';
+import '../services/snackbar.dart';
+import 'joint_workouts_screen.dart';
 
+// --- ВИДЖЕТ ДИАЛОГА ОЖИДАНИЯ ОТВЕТА ХОСТОМ (ИСПРАВЛЕННАЯ ВЕРСИЯ) ---
+// Логика приведена в соответствие с home_page.dart для консистентности
+class _HostWaitingDialog extends StatefulWidget {
+  final String sessionId;
+  final BuildContext parentContext;
+
+  const _HostWaitingDialog({
+    required this.sessionId,
+    required this.parentContext,
+  });
+
+  @override
+  _HostWaitingDialogState createState() => _HostWaitingDialogState();
+}
+
+class _HostWaitingDialogState extends State<_HostWaitingDialog> {
+  StreamSubscription? _sessionSubscription;
+  String _status = 'invited';
+
+  @override
+  void initState() {
+    super.initState();
+    _subscribeToSessionStatus();
+  }
+
+  @override
+  void dispose() {
+    _sessionSubscription?.cancel();
+    super.dispose();
+  }
+
+  void _subscribeToSessionStatus() {
+    _sessionSubscription = FirebaseFirestore.instance
+        .collection('joint_sessions')
+        .doc(widget.sessionId)
+        .snapshots()
+        .listen((snapshot) {
+      if (!mounted) return;
+      if (!snapshot.exists) {
+        Navigator.of(context).pop();
+        return;
+      }
+      final newStatus = snapshot.data()?['status'] as String? ?? 'cancelled';
+      if (_status != newStatus) {
+        setState(() => _status = newStatus);
+
+        if (newStatus == 'active') {
+          // Автоматический переход к тренировке при принятии
+          Navigator.of(context).pop(); // Закрываем диалог
+          Navigator.push(
+            widget.parentContext,
+            MaterialPageRoute(
+              builder: (context) => JointWorkoutScreen(sessionId: widget.sessionId, isHost: true),
+            ),
+          );
+        } else if (newStatus == 'rejected' || newStatus == 'cancelled') {
+          // Автоматическое закрытие диалога через 3 секунды
+          Future.delayed(const Duration(seconds: 3), () {
+            if (mounted) Navigator.of(context).pop();
+          });
+        }
+      }
+    });
+  }
+
+  Future<void> _cancelInvitation() async {
+    await FirebaseFirestore.instance
+        .collection('joint_sessions')
+        .doc(widget.sessionId)
+        .update({'status': 'cancelled'});
+    // Диалог закроется автоматически благодаря StreamSubscription
+  }
+
+  Widget _buildContentForStatus() {
+    switch (_status) {
+      case 'rejected':
+      case 'cancelled':
+        return Column(
+          key: const ValueKey('rejected'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cancel, color: Colors.red, size: 48),
+            const SizedBox(height: 20),
+            Text(_status == 'rejected' ? "Приглашение отклонено." : "Приглашение отменено."),
+            const SizedBox(height: 10),
+            const Text("Это окно закроется автоматически.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+          ],
+        );
+
+      case 'invited':
+      default:
+        return Column(
+          key: const ValueKey('waiting'),
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 20),
+            const Text("Ожидание ответа от друга..."),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: _cancelInvitation,
+              child: const Text("Отменить приглашение", style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return WillPopScope(
+      onWillPop: () async => false, // Запрет закрытия системной кнопкой "назад"
+      child: AlertDialog(
+        title: const Text("Статус приглашения"),
+        content: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: _buildContentForStatus(),
+        ),
+      ),
+    );
+  }
+}
+
+// --- ОСНОВНОЙ ЭКРАН УПРАЖНЕНИЙ (С ИСПРАВЛЕНИЯМИ) ---
 class ExercisesScreen extends StatelessWidget {
   const ExercisesScreen({super.key});
+
+  // Выносим данные в список для легкого доступа
+  static final List<Map<String, String>> _allExercises = [
+    {'name': 'Анантасана', 'image1': 'assets/Anantasana_1.svg', 'image2': 'assets/Anantasana_2.svg', 'image3': 'assets/Anantasana_3.svg'},
+    {'name': 'Бхуджангасана', 'image1': 'assets/Bhujangasana_1.svg', 'image2': 'assets/Bhujangasana_2.svg', 'image3': 'assets/Bhujangasana_3.svg'},
+    {'name': 'Маха Мудра', 'image1': 'assets/MahaMudra_1.svg', 'image2': 'assets/MahaMudra_2.svg', 'image3': 'assets/MahaMudra_3.svg'},
+    {'name': 'Паригхасана', 'image1': 'assets/Parigkhasana_1.svg', 'image2': 'assets/Parigkhasana_2.svg', 'image3': 'assets/Parigkhasana_3.svg'},
+    {'name': 'Триконасана', 'image1': 'assets/Trikonasana_1.svg', 'image2': 'assets/Trikonasana_2.svg', 'image3': 'assets/Trikonasana_3.svg'},
+    {'name': 'Пашчимоттанасана', 'image1': 'assets/idk_1.svg', 'image2': 'assets/idk_2.svg', 'image3': 'assets/idk_3.svg'},
+    {'name': 'Баласана', 'image1': 'assets/Balasana_1.svg', 'image2': 'assets/Balasana_2.svg', 'image3': 'assets/Balasana_3.svg'},
+    {'name': 'Падмасана', 'image1': 'assets/Padmasana_1.svg', 'image2': 'assets/Padmasana_2.svg', 'image3': 'assets/Padmasana_3.svg'},
+    {'name': 'Супта Вирасана', 'image1': 'assets/SuptaVirasana_1.svg', 'image2': 'assets/SuptaVirasana_2.svg', 'image3': 'assets/SuptaVirasana_3.svg'},
+    {'name': 'Шавасана', 'image1': 'assets/Shavasana_1.svg', 'image2': 'assets/Shavasana_1.svg', 'image3': 'assets/Shavasana_1.svg'},
+    {'name': 'Супта Свастикасана', 'image1': 'assets/SuptaSvastikasana_1.svg', 'image2': 'assets/SuptaSvastikasana_2.svg', 'image3': 'assets/SuptaSvastikasana_2.svg'},
+  ];
+
+  // --- ИСПРАВЛЕННАЯ ЛОГИКА ПРИГЛАШЕНИЯ ---
+
+  Future<void> _showInviteDialog(BuildContext context) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      SnackBarService.showSnackBar(context, 'Для приглашения нужно войти в аккаунт', true);
+      return;
+    }
+
+    final friends = await _loadFriends(user.uid);
+    if (friends.isEmpty && context.mounted) {
+      SnackBarService.showSnackBar(context, 'У вас нет друзей для совместной тренировки', true);
+      return;
+    }
+
+    String? selectedExerciseName;
+    String? selectedFriendId;
+
+    if (!context.mounted) return;
+    await showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Пригласить друга'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(labelText: 'Выберите упражнение'),
+              items: _allExercises
+                  .map((exercise) => DropdownMenuItem<String>(value: exercise['name'], child: Text(exercise['name']!)))
+                  .toList(),
+              onChanged: (value) => selectedExerciseName = value,
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              decoration: const InputDecoration(labelText: 'Выберите друга'),
+              items: friends
+                  .map((friend) => DropdownMenuItem<String>(value: friend['id'], child: Text(friend['nickname'] ?? 'Без ника')))
+                  .toList(),
+              onChanged: (value) => selectedFriendId = value,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Отмена')),
+          TextButton(
+            onPressed: () async {
+              if (selectedExerciseName != null && selectedFriendId != null) {
+                Navigator.pop(dialogContext); // Закрываем диалог выбора
+                await _sendAndTrackInvitation(context, selectedFriendId!, selectedExerciseName!);
+              } else {
+                SnackBarService.showSnackBar(context, 'Выберите друга и упражнение', true);
+              }
+            },
+            child: const Text('Пригласить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _sendAndTrackInvitation(BuildContext context, String friendId, String exerciseName) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) return;
+
+    // Находим полные данные о выбранном упражнении
+    final exerciseData = _allExercises.firstWhere((ex) => ex['name'] == exerciseName, orElse: () => {});
+    if (exerciseData.isEmpty) {
+      if(context.mounted) SnackBarService.showSnackBar(context, "Ошибка: упражнение не найдено", true);
+      return;
+    }
+
+    // Создаем "тренировку" из одного упражнения, чтобы соответствовать формату
+    final List<Map<String, dynamic>> exercisesList = [
+      {
+        'name': exerciseData['name'],
+        'image1': exerciseData['image1'],
+        'image2': exerciseData['image2'],
+        'image3': exerciseData['image3'],
+      }
+    ];
+
+    final sessionId = 'joint_${user.uid}_${DateTime.now().millisecondsSinceEpoch}';
+
+    try {
+      // Отправляем приглашение с унифицированными данными
+      await _sendInvitation(user.uid, friendId, sessionId, exerciseName, exercisesList);
+      if (!context.mounted) return;
+      SnackBarService.showSnackBar(context, 'Приглашение отправлено!', false);
+
+      // Показываем диалог ожидания
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => _HostWaitingDialog(
+          sessionId: sessionId,
+          parentContext: context,
+        ),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        SnackBarService.showSnackBar(context, "Ошибка отправки приглашения: $e", true);
+      }
+    }
+  }
+
+  // Функция приведена в полное соответствие с home_page.dart
+  Future<void> _sendInvitation(String hostId, String friendId, String sessionId, String workoutName, List<Map<String, dynamic>> exercises) async {
+    final WriteBatch batch = FirebaseFirestore.instance.batch();
+
+    // 1. Документ сессии
+    final sessionRef = FirebaseFirestore.instance.collection('joint_sessions').doc(sessionId);
+    batch.set(sessionRef, {
+      'hostId': hostId,
+      'invitedParticipantId': friendId,
+      'participantId': null,
+      'workoutName': workoutName, // Правильное поле
+      'exercises': exercises,      // Правильное поле
+      'status': 'invited',
+      'createdAt': FieldValue.serverTimestamp(),
+      'currentExerciseIndex': 0,
+      'currentPage': 0,
+      'isTimerRunning': false,
+      'isPaused': true,
+      'secondsRemaining': 30,
+    });
+
+    // 2. Документ уведомления
+    final notificationRef = FirebaseFirestore.instance.collection('notifications').doc();
+    batch.set(notificationRef, {
+      'type': 'workout_invite',
+      'fromUserId': hostId,
+      'toUserId': friendId,
+      'sessionId': sessionId,
+      'workoutName': workoutName, // Правильное поле
+      'createdAt': FieldValue.serverTimestamp(),
+      'read': false,
+      'status': 'pending',
+    });
+
+    await batch.commit();
+  }
+
+
+  // --- ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ И UI (без изменений) ---
+
+  Future<List<Map<String, dynamic>>> _loadFriends(String userId) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.collection('friends').where('users', arrayContains: userId).get();
+      if (snapshot.docs.isEmpty) return [];
+
+      final List<Future<Map<String, dynamic>?>> friendFutures = snapshot.docs.map((doc) async {
+        try {
+          final friendId = doc.data()['users'].firstWhere((id) => id != userId);
+          final userDoc = await FirebaseFirestore.instance.collection('users').doc(friendId).get();
+          if (userDoc.exists) {
+            return {...userDoc.data()!, 'id': friendId};
+          }
+          return null;
+        } catch (e) {
+          debugPrint("Ошибка загрузки друга: $e");
+          return null;
+        }
+      }).toList();
+
+      final results = await Future.wait(friendFutures);
+      return results.whereType<Map<String, dynamic>>().toList();
+
+    } catch (e) {
+      debugPrint("Ошибка загрузки списка друзей: $e");
+      return [];
+    }
+  }
+
+  Widget _buildExerciseCard(BuildContext context, Map<String, String> exerciseData) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(16),
+      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (context) => ExerciseDetailScreen(
+          exerciseName: exerciseData['name']!,
+          imagePath1: exerciseData['image1']!,
+          imagePath2: exerciseData['image2']!,
+          imagePath3: exerciseData['image3']!
+      ))),
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border.all(color: const Color(0xFF92A880), width: 4),
+          borderRadius: BorderRadius.circular(16),
+          color: Colors.white,
+          boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.3), spreadRadius: 2, blurRadius: 5, offset: const Offset(0, 3))],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: SvgPicture.asset(exerciseData['image1']!, width: 120, height: 120, fit: BoxFit.fitWidth),
+            ),
+            const SizedBox(height: 8),
+            Text(exerciseData['name']!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold), textAlign: TextAlign.center, ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: Stack(
         children: [
-          Positioned.fill(
-            child: SvgPicture.asset(
-              'assets/background.svg',
-              fit: BoxFit.cover,
-            ),
-          ),
+          Positioned.fill(child: SvgPicture.asset('assets/background.svg', fit: BoxFit.cover)),
           SafeArea(
             child: Column(
               children: [
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        icon: const Icon(
-                          Icons.arrow_back,
-                          color: Colors.black,
-                          size: 30,
-                        ),
-                        onPressed: () {
-                          Navigator.pop(context);
-                        },
-                      ),
-                      const Expanded(
-                        child: Text(
-                          "Упражнения",
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  child: Row(children: [
+                    IconButton(icon: const Icon(Icons.arrow_back, size: 30), onPressed: () => Navigator.pop(context)),
+                    const Expanded(child: Text("Упражнения", textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+                    const SizedBox(width: 48), // Для симметрии
+                  ]),
                 ),
                 Expanded(
-                  child: GridView.count(
-                    padding: const EdgeInsets.all(16),
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 16,
-                    mainAxisSpacing: 16,
-                    children: [
-                      _buildExerciseCard(
-                        context,
-                        'Анантасана',
-                        'assets/Anantasana_1.svg',
-                        'assets/Anantasana_2.svg',
-                        'assets/Anantasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Бхуджангасана',
-                        'assets/Bhujangasana_1.svg',
-                        'assets/Bhujangasana_2.svg',
-                        'assets/Bhujangasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Маха Мудра',
-                        'assets/MahaMudra_1.svg',
-                        'assets/MahaMudra_2.svg',
-                        'assets/MahaMudra_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Паригхасана',
-                        'assets/Parigkhasana_1.svg',
-                        'assets/Parigkhasana_2.svg',
-                        'assets/Parigkhasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Триконасана',
-                        'assets/Trikonasana_1.svg',
-                        'assets/Trikonasana_2.svg',
-                        'assets/Trikonasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Пашчимоттанасана',
-                        'assets/idk_1.svg',
-                        'assets/idk_2.svg',
-                        'assets/idk_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Баласана',
-                        'assets/Balasana_1.svg',
-                        'assets/Balasana_2.svg',
-                        'assets/Balasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Падмасана',
-                        'assets/Padmasana_1.svg',
-                        'assets/Padmasana_2.svg',
-                        'assets/Padmasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Супта Вирасана',
-                        'assets/SuptaVirasana_1.svg',
-                        'assets/SuptaVirasana_2.svg',
-                        'assets/SuptaVirasana_3.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Шавасана',
-                        'assets/Shavasana_1.svg',
-                        'assets/Shavasana_1.svg',
-                        'assets/Shavasana_1.svg',
-                      ),
-                      _buildExerciseCard(
-                        context,
-                        'Супта Свастикасана',
-                        'assets/SuptaSvastikasana_1.svg',
-                        'assets/SuptaSvastikasana_2.svg',
-                        'assets/SuptaSvastikasana_2.svg',
-                      ),
-                    ],
+                  child: GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 80),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      crossAxisSpacing: 16,
+                      mainAxisSpacing: 16,
+                    ),
+                    itemCount: _allExercises.length,
+                    itemBuilder: (context, index) {
+                      return _buildExerciseCard(context, _allExercises[index]);
+                    },
                   ),
                 ),
               ],
@@ -144,79 +393,19 @@ class ExercisesScreen extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildExerciseCard(
-    BuildContext context,
-    String name,
-    String image1,
-    String image2,
-    String image3,
-  ) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () {
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => ExerciseDetailScreen(
-              exerciseName: name,
-              imagePath1: image1,
-              imagePath2: image2,
-              imagePath3: image3,
-            ),
-          ),
-        );
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border.all(
-            color: const Color(0xFF92A880),
-            width: 4,
-          ),
-          borderRadius: BorderRadius.circular(16),
-          color: Colors.white,
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.3),
-              spreadRadius: 2,
-              blurRadius: 5,
-              offset: const Offset(0, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(10),
-                child: SvgPicture.asset(
-                  image1,
-                  width: 120,
-                  height: 120,
-                  fit: BoxFit.fitWidth,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              name,
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _showInviteDialog(context),
+        backgroundColor: const Color(0xFF92A880),
+        child: const Icon(Icons.group_add, color: Colors.white),
       ),
     );
   }
 }
+
+
+// ===========================================================================
+// ExerciseDetailScreen - ЭТА ЧАСТЬ ОСТАЕТСЯ БЕЗ ИЗМЕНЕНИЙ
+// ===========================================================================
 
 class ExerciseDetailScreen extends StatefulWidget {
   final String exerciseName;
@@ -250,7 +439,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
   double _musicVolume = 50.0;
   String? _selectedMusicTrack;
 
-  // Словарь с текстами озвучки для каждого упражнения, с SSML для пауз
   final Map<String, List<String>> exerciseInstructions = {
     'Анантасана': [
       '<speak>Позиция 1: Лягте на спину. Расслабьтесь, почувствуйте контакт тела с полом. На выдохе плавно перекатитесь на левый бок. Расположитесь так, чтобы вес тела равномерно распределился на левом боку. Теперь аккуратно приподнимите голову. Левую руку вытяните над головой, выстраивая одну линию с телом. Согните локоть и ладонью левой руки мягко поддержите голову — расположите её чуть выше уха. Дышите спокойно или сделайте 2–3 глубоких цикла дыхания.</speak>',
@@ -309,7 +497,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     ],
   };
 
-  // Словарь с длительностями таймеров для каждой позиции (в секундах)
   final Map<String, List<int>> exerciseTimers = {
     'Анантасана': [30, 20, 40],
     'Бхуджангасана': [20, 30, 30],
@@ -324,7 +511,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     'Супта Свастикасана': [30, 30, 60],
   };
 
-  // Список доступных музыкальных треков (синхронизирован с AccountScreen)
   final List<Map<String, String>> _availableMusicTracks = [
     {'id': 'ambient1', 'name': 'Спокойный эмбиент', 'path': 'assets/music/ambient1.mp3'},
     {'id': 'ambient2', 'name': 'Мягкий эмбиент', 'path': 'assets/music/ambient2.mp3'},
@@ -342,7 +528,79 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     _initTts();
   }
 
-  // Загрузка настроек голоса и музыки из SharedPreferences
+  Future<void> _updateWorkoutCompletion() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      debugPrint("Пользователь не авторизован, обновление отменено.");
+      return;
+    }
+
+    final firestore = FirebaseFirestore.instance;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final todayKey = '${today.year}-${today.month}-${today.day}';
+
+    try {
+      final userCalendarRef = firestore.collection('user_calendar').doc(user.uid);
+      final userRef = firestore.collection('users').doc(user.uid);
+
+      await firestore.runTransaction((transaction) async {
+        final calendarDoc = await transaction.get(userCalendarRef);
+        if (calendarDoc.exists && (calendarDoc.data()?['workouts']?[todayKey]?['completed'] == true)) {
+          debugPrint("Тренировка на сегодня уже засчитана. Обновление не требуется.");
+          return;
+        }
+
+        final userDoc = await transaction.get(userRef);
+        if (!userDoc.exists) {
+          debugPrint("Документ пользователя не найден.");
+          return;
+        }
+
+        final data = userDoc.data() ?? {};
+        final lastWorkoutStamp = data['lastWorkoutDate'] as Timestamp?;
+        final streakDays = data['streakDays'] ?? 0;
+        final lastWorkoutDate = lastWorkoutStamp?.toDate();
+
+        int newStreak = 1;
+        if (lastWorkoutDate != null) {
+          final yesterday = today.subtract(const Duration(days: 1));
+          if (DateTime(lastWorkoutDate.year, lastWorkoutDate.month, lastWorkoutDate.day)
+              .isAtSameMomentAs(yesterday)) {
+            newStreak = streakDays + 1;
+          }
+        }
+
+        transaction.update(userRef, {
+          'lastWorkoutDate': Timestamp.fromDate(now),
+          'streakDays': newStreak,
+          'workoutHistory': FieldValue.arrayUnion([Timestamp.fromDate(now)]),
+        });
+
+        transaction.set(
+            userCalendarRef,
+            {
+              'workouts': {
+                todayKey: {
+                  'completed': true,
+                  'date': Timestamp.fromDate(now),
+                }
+              }
+            },
+            SetOptions(merge: true));
+      });
+
+      debugPrint("Данные тренировки и стрик успешно обновлены!");
+
+    } catch (e) {
+      debugPrint('Ошибка атомарного обновления данных тренировки: $e');
+      if (mounted) {
+        SnackBarService.showSnackBar(
+            context, 'Ошибка обновления данных тренировки', true);
+      }
+    }
+  }
+
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
@@ -353,7 +611,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     });
   }
 
-  // Инициализация настроек TTS
   Future<void> _initTts() async {
     await flutterTts.setLanguage("ru-RU");
     await flutterTts.setSpeechRate(0.5);
@@ -364,7 +621,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     }
   }
 
-  // Метод для озвучивания позиции с SSML
   Future<void> _speakPosition(int page) async {
     final instructions = exerciseInstructions[widget.exerciseName] ?? ['<speak>Позиция ${page + 1}</speak>'];
     String text = instructions[page];
@@ -374,7 +630,6 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     try {
       await flutterTts.speak(text);
     } catch (e) {
-      // Fallback: убираем SSML-теги и пробуем снова
       final fallbackText = text
           .replaceAll(RegExp(r'<[^>]+>'), '')
           .replaceAll(RegExp(r'<break time="[^"]*"/>'), ', ');
@@ -382,21 +637,19 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
     }
   }
 
-  // Воспроизведение музыки
   Future<void> _playMusic() async {
     if (_selectedMusicTrack != null) {
       try {
         final track = _availableMusicTracks.firstWhere((t) => t['id'] == _selectedMusicTrack);
         await audioPlayer.setVolume(_musicVolume / 100);
         await audioPlayer.play(AssetSource(track['path']!.replaceFirst('assets/', '')), mode: PlayerMode.mediaPlayer);
-        await audioPlayer.setReleaseMode(ReleaseMode.loop); // Зацикливаем трек
+        await audioPlayer.setReleaseMode(ReleaseMode.loop);
       } catch (e) {
         debugPrint('Ошибка воспроизведения музыки: $e');
       }
     }
   }
 
-  // Остановка музыки
   Future<void> _stopMusic() async {
     try {
       await audioPlayer.stop();
@@ -416,12 +669,17 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
   }
 
   void startTimer() {
+    if (!mounted) return;
     setState(() {
       isTimerRunning = true;
       timerDuration = exerciseTimers[widget.exerciseName]![currentPage];
     });
 
     timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
       setState(() {
         if (timerDuration > 0) {
           timerDuration--;
@@ -433,7 +691,8 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
           } else {
             setState(() {
               showPraise = true;
-              _stopMusic(); // Останавливаем музыку при завершении упражнения
+              _updateWorkoutCompletion();
+              _stopMusic();
             });
           }
         }
@@ -451,7 +710,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
 
     Future.delayed(const Duration(seconds: 5), () async {
       if (mounted) {
-        await _playMusic(); // Начинаем музыку
+        await _playMusic();
         _speakPosition(currentPage);
         startTimer();
       }
@@ -498,7 +757,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                           size: 30,
                         ),
                         onPressed: () {
-                          _stopMusic(); // Останавливаем музыку при выходе
+                          _stopMusic();
                           Navigator.pop(context);
                         },
                       ),
@@ -511,6 +770,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                       controller: pageController,
                       physics: const NeverScrollableScrollPhysics(),
                       onPageChanged: (int page) {
+                        if (!mounted) return;
                         setState(() {
                           currentPage = page;
                           isTimerRunning = false;
@@ -519,7 +779,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                             _speakPosition(page);
                             startTimer();
                           } else {
-                            _stopMusic(); // Останавливаем музыку при возврате на первую позицию
+                            _stopMusic();
                           }
                         });
                       },
@@ -531,65 +791,69 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                     ),
                   )
                 else
-                  Center(
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 150),
-                      padding: const EdgeInsets.all(34),
-                      decoration: BoxDecoration(
-                        color: const Color.fromARGB(255, 252, 251, 251).withOpacity(0.9),
-                        borderRadius: BorderRadius.circular(20),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withOpacity(0.2),
-                            spreadRadius: 2,
-                            blurRadius: 5,
-                            offset: const Offset(0, 3),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          const Icon(
-                            Icons.star,
-                            size: 100,
-                            color: Colors.amber,
-                          ),
-                          const SizedBox(height: 20),
-                          const Text(
-                            'Поздравляем!',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
+                  Expanded(
+                    child: Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
+                        padding: const EdgeInsets.all(34),
+                        decoration: BoxDecoration(
+                          color: const Color.fromARGB(255, 252, 251, 251).withOpacity(0.9),
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.grey.withOpacity(0.2),
+                              spreadRadius: 2,
+                              blurRadius: 5,
+                              offset: const Offset(0, 3),
                             ),
-                          ),
-                          const Text(
-                            'Вы успешно завершили упражнение!',
-                            style: TextStyle(fontSize: 16),
-                          ),
-                          const SizedBox(height: 30),
-                          ElevatedButton(
-                            onPressed: () {
-                              _stopMusic(); // Останавливаем музыку при закрытии
-                              Navigator.pop(context);
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: secondaryColor,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(15),
-                              ),
-                              minimumSize: const Size(200, 50),
+                          ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.star,
+                              size: 100,
+                              color: Colors.amber,
                             ),
-                            child: const Text(
-                              'Закрыть',
+                            const SizedBox(height: 20),
+                            const Text(
+                              'Поздравляем!',
                               style: TextStyle(
-                                fontSize: 18,
+                                fontSize: 24,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.white,
                               ),
                             ),
-                          ),
-                        ],
+                            const Text(
+                              'Вы успешно завершили упражнение!',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            const SizedBox(height: 30),
+                            ElevatedButton(
+                              onPressed: () {
+                                _stopMusic();
+                                Navigator.pop(context);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: secondaryColor,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(15),
+                                ),
+                                minimumSize: const Size(200, 50),
+                              ),
+                              child: const Text(
+                                'Закрыть',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
@@ -662,7 +926,7 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                   ),
                 if (isTimerRunning)
                   Text(
-                    '$timerDuration',
+                    '${timerDuration.toString().padLeft(2, '0')}',
                     style: const TextStyle(
                       fontSize: 48,
                       fontWeight: FontWeight.bold,
@@ -683,12 +947,13 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                       child: IconButton(
                         onPressed: currentPage > 0
                             ? () {
-                                setState(() {
-                                  timer?.cancel();
-                                  isTimerRunning = false;
-                                  pageController.jumpToPage(currentPage - 1);
-                                });
-                              }
+                          if (!mounted) return;
+                          setState(() {
+                            timer?.cancel();
+                            isTimerRunning = false;
+                            pageController.jumpToPage(currentPage - 1);
+                          });
+                        }
                             : null,
                         icon: const Icon(Icons.arrow_back),
                         color: Colors.white,
@@ -710,12 +975,13 @@ class _ExerciseDetailScreenState extends State<ExerciseDetailScreen> {
                       child: IconButton(
                         onPressed: currentPage < 2
                             ? () {
-                                setState(() {
-                                  timer?.cancel();
-                                  isTimerRunning = false;
-                                  pageController.jumpToPage(currentPage + 1);
-                                });
-                              }
+                          if (!mounted) return;
+                          setState(() {
+                            timer?.cancel();
+                            isTimerRunning = false;
+                            pageController.jumpToPage(currentPage + 1);
+                          });
+                        }
                             : null,
                         icon: const Icon(Icons.arrow_forward),
                         color: Colors.white,
